@@ -185,3 +185,4 @@ ovoz o'chadi, tahlil statistik (rule-based) bo'ladi.
 - Faqat UZS. Bot matnlari o'zbekcha (ruscha — `bot/texts/` ga fayl qo'shish).
 - To'lov qo'lda tasdiqlanadi (Click/Payme API — Phase 2, `services/billing.py` ga adapter).
 - Phase 2: chek OCR, budjet limitlari, takroriy xarajatlar, qarz moduli.
+# puldaftar-ai
