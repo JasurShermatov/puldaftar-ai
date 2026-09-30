@@ -3,13 +3,15 @@ server {
     listen 80;
     server_name ${DOMAIN};
     server_tokens off;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $web_upstream http://web:80;
     client_max_body_size 12m;
 
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
     location / {
-        proxy_pass http://web:80;
+        proxy_pass $web_upstream;
         include /etc/hisobchi-proxy/proxy_params;
     }
 }
