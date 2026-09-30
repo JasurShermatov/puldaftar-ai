@@ -1,5 +1,0 @@
-# Avtomatik HTTPS (Let's Encrypt). DOMAIN .env da.
-{$DOMAIN} {
-    encode gzip
-    reverse_proxy web:80
-}

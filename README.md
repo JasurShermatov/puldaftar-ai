@@ -56,7 +56,7 @@ admin panel → Sozlamalar → Tariflar. Karta raqami, karta egasi va chek qabul
 ## 2. Arxitektura
 
 ```
-Telegram ──webhook──► Caddy (HTTPS) ──► nginx (web) ──► FastAPI (api) ──► PostgreSQL (RLS)
+Telegram ──webhook──► nginx+certbot (HTTPS) ──► nginx (web) ──► FastAPI (api) ──► PostgreSQL (RLS)
                                           │  statik Mini App        │  aiogram bot    ▲
                                           └─────────────────────────┘  OpenAI         │
                                                          worker (23:59 hisobot, eslatmalar)─┘
@@ -129,7 +129,7 @@ sudo ./scripts/setup.sh
 ```
 Skript o'zi: Docker o'rnatadi → barcha maxfiy kalitlarni generatsiya qiladi → server IP sini aniqlab
 `https://<IP-chiziqcha>.sslip.io` manzilini beradi (bepul xizmat, IP ni HTTPS manzilga aylantiradi; sertifikatni
-Caddy avtomatik oladi) → `BOT_TOKEN`/`OPENAI_API_KEY` bo'lmasa so'raydi → hammasini ishga tushiradi.
+certbot oladi, `scripts/ssl.sh`) → `BOT_TOKEN`/`OPENAI_API_KEY` bo'lmasa so'raydi → hammasini ishga tushiradi.
 Bot `polling` rejimida ishlaydi — webhook/domen kerak emas.
 
 ### B) O'z kompyuteringizda sinash (Mac/PC, ochiq IP kerak emas)
@@ -145,7 +145,9 @@ Faqat `.env` dagi `SUPERADMIN_IDS` (Telegram ID lar, vergul bilan) — nechta ID
 ID ni olib tashlasangiz, u keyingi kirishda oddiy userga aylanadi. O'zgartirgach: `docker compose up -d`.
 Keyin `/admin` → Sozlamalar: **karta raqami, karta egasi, chek qabul qiluvchi @username, tariflar**.
 
-Keyinroq domen olsangiz: `.env` da `DOMAIN=sizning.domen` va `PUBLIC_BASE_URL=https://sizning.domen`, so'ng `docker compose up -d`.
+Keyinroq domen olsangiz: `.env` da `DOMAIN=sizning.domen` va `PUBLIC_BASE_URL=https://sizning.domen`, so'ng
+`./scripts/ssl.sh` (certbot sertifikat oladi) va `docker compose up -d --force-recreate api worker`.
+Sertifikat har 12 soatda avtomatik tekshiriladi va yangilanadi (certbot konteyneri).
 
 Foydali buyruqlar: `docker compose logs -f api worker` · `docker compose down` · `docker compose up -d --build` (yangilash).
 

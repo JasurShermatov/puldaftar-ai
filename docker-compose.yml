@@ -56,16 +56,28 @@ services:
     restart: unless-stopped
     depends_on: [api]
 
-  caddy:
-    image: caddy:2-alpine
+  # Tashqi nginx: 80/443, HTTPS (certbot sertifikati). Sertifikat yo'q bo'lsa HTTP rejimida ishlaydi.
+  proxy:
+    image: nginx:1.27-alpine
     restart: unless-stopped
     ports: ["80:80", "443:443"]
     environment:
       DOMAIN: ${DOMAIN}
+    entrypoint: ["/bin/sh", "/etc/hisobchi-proxy/entrypoint.sh"]
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
+      - ./deploy/proxy:/etc/hisobchi-proxy:ro
+      - letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot:ro
     depends_on: [web]
+
+  # Let's Encrypt: birinchi sertifikat ./scripts/ssl.sh bilan, keyin har 12 soatda avtomatik yangilanadi.
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --quiet --deploy-hook 'touch /etc/letsencrypt/.renewed'; sleep 43200 & wait $${!}; done"]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
 
   # Faqat test/lokal (Mac/PC) uchun: ochiq IP/port kerak emas. ./scripts/setup.sh --tunnel
   # Bepul Cloudflare tunnel https://<random>.trycloudflare.com manzil beradi (qayta ishga tushganda o'zgaradi).
@@ -78,4 +90,5 @@ services:
 
 volumes:
   pgdata:
-  caddy_data:
+  letsencrypt:
+  certbot_www:

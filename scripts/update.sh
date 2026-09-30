@@ -15,7 +15,7 @@ git reset --hard "origin/$BRANCH"
 
 echo "==> Build va qayta ishga tushirish"
 docker compose build
-docker compose up -d
+docker compose up -d --remove-orphans
 docker image prune -f >/dev/null 2>&1 || true
 
 echo "==> Holat"

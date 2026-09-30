@@ -1,0 +1,28 @@
+# Sertifikat hali yo'q: HTTP orqali ishlaydi, certbot challenge'iga javob beradi.
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    server_tokens off;
+    client_max_body_size 12m;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        proxy_pass http://web:80;
+        include /etc/hisobchi-proxy/proxy_params;
+    }
+}
+
+# Boshqa host/IP bilan kelgan so'rovlar
+server {
+    listen 80 default_server;
+    server_name _;
+    server_tokens off;
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        return 444;
+    }
+}

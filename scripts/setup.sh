@@ -12,7 +12,7 @@
 #   1) Docker yo'q bo'lsa o'rnatadi
 #   2) .env yo'q/chala bo'lsa: kerakli maxfiy kalitlarni generatsiya qiladi
 #   3) Server IP sini aniqlab, <ip>.sslip.io manzilini beradi (bepul, domen sotib olish shart emas).
-#      Telegram Mini App faqat HTTPS da ishlaydi — Caddy shu manzilga Let's Encrypt sertifikatini o'zi oladi.
+#      Telegram Mini App faqat HTTPS da ishlaydi — certbot shu manzilga Let's Encrypt sertifikatini oladi (scripts/ssl.sh).
 #   4) BOT_TOKEN / OPENAI_API_KEY bo'lmasa so'raydi
 #   5) Hammasini ishga tushiradi va owner (superadmin) kodini ko'rsatadi
 # =====================================================================
@@ -100,7 +100,7 @@ if [ "$MODE" = "public" ] && [[ "$(get DOMAIN)" != *".sslip.io" ]]; then
     warn "$(get DOMAIN) → $DNSIP, lekin server IP $MYIP."
     warn "Cloudflare'da A yozuvi $MYIP ga qarasin va bulut belgisi KULRANG (DNS only) bo'lsin, keyin qayta ishga tushiring."
   elif [ -z "$DNSIP" ]; then
-    warn "$(get DOMAIN) hali topilmadi (DNS tarqalishi 5-30 daqiqa). Sertifikat DNS tayyor bo'lgach avtomatik olinadi."
+    warn "$(get DOMAIN) hali topilmadi (DNS tarqalishi 5-30 daqiqa). DNS tayyor bo'lgach: ./scripts/ssl.sh"
   fi
 fi
 
@@ -120,7 +120,7 @@ fi
 # ---------- 5. Ishga tushirish ----------
 say "Build va ishga tushirish (birinchi marta 3-6 daqiqa)…"
 if [ "$MODE" = "tunnel" ]; then
-  docker compose stop caddy >/dev/null 2>&1 || true
+  docker compose stop proxy certbot >/dev/null 2>&1 || true
   docker compose --profile tunnel up -d --build db redis migrate api worker web tunnel
   say "Tunnel manzilini kutyapman…"
   URL=""
@@ -134,7 +134,8 @@ if [ "$MODE" = "tunnel" ]; then
   # yangi manzilni bot menyusiga yozish uchun api qayta yaratiladi
   docker compose --profile tunnel up -d --force-recreate api worker
 else
-  docker compose up -d --build
+  docker compose up -d --build --remove-orphans
+  ./scripts/ssl.sh || warn "SSL hozir olinmadi. DNS tayyor bo'lgach: ./scripts/ssl.sh"
 fi
 
 say "API tayyor bo'lishini kutyapman…"
@@ -149,7 +150,7 @@ cat <<MSG
 ──────────────────────────────────────────────────────────────
  ✅ Hisobchi AI ishga tushdi
     Mini App:   $(get PUBLIC_BASE_URL)
-    (HTTPS sertifikat birinchi ochilishda 10-60 soniyada olinadi)
+    (HTTPS: certbot. Qayta olish: ./scripts/ssl.sh · yangilash avtomatik)
 
  🛡 Superadminlar (.env → SUPERADMIN_IDS): $(get SUPERADMIN_IDS)
     Botga /start, so'ng /admin → Sozlamalar: karta raqami, tariflar.
