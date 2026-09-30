@@ -1,0 +1,18 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+.next/
+out/
+backups/
+
+# Mac / IDE / arxivlar
+.DS_Store
+.vscode/
+.idea/
+*.log
+*.tar.gz
+/main.py

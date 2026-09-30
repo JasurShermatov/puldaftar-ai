@@ -1,0 +1,81 @@
+name: hisobchi
+
+x-backend: &backend
+  build: ./backend
+  env_file: .env
+  restart: unless-stopped
+  depends_on:
+    db: { condition: service_healthy }
+    redis: { condition: service_started }
+    migrate: { condition: service_completed_successfully }
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_APP_ROLE: ${DB_APP_ROLE}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+    # Tashqariga port ochilmaydi (faqat ichki tarmoq)
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+
+  migrate:
+    build: ./backend
+    env_file: .env
+    command: ["python", "-m", "app.db.migrate"]
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    <<: *backend
+    # Webhook rejimida bir nechta nusxa ishga tushirish mumkin: docker compose up --scale api=3
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.worker.scheduler"]
+    healthcheck:
+      disable: true   # worker HTTP port ochmaydi (Dockerfile'dagi API healthcheck unga tegishli emas)
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on: [api]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [web]
+
+  # Faqat test/lokal (Mac/PC) uchun: ochiq IP/port kerak emas. ./scripts/setup.sh --tunnel
+  # Bepul Cloudflare tunnel https://<random>.trycloudflare.com manzil beradi (qayta ishga tushganda o'zgaradi).
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--url", "http://web:80"]
+    restart: unless-stopped
+    depends_on: [web]
+    profiles: ["tunnel"]
+
+volumes:
+  pgdata:
+  caddy_data:
