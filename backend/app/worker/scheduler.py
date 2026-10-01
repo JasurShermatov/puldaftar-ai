@@ -18,8 +18,11 @@ from app.bot.texts import uz as T
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.db.database import db
+from app.core.timeutil import local_now
+from app.repositories import debts as debtrepo
 from app.repositories import system as sysrepo
 from app.repositories import users as userrepo
+from app.services import debts as debt_svc
 from app.services import insights as insight_svc
 from app.services import notifier
 from app.services import reports as report_svc
@@ -93,6 +96,31 @@ async def reminders_loop() -> None:
         await _sleep(600)
 
 
+async def debt_reminders_loop() -> None:
+    """Qarz eslatmalari: muddatgacha 3 kun qolganda va muddati o'tganda — user vaqti bilan 09:00 dan keyin, kuniga 1 marta."""
+    while not _stop.is_set():
+        try:
+            async with db.system_tx() as conn:
+                due = await debtrepo.due_for_reminder(conn)
+            if due:
+                log.info("debt reminders due: %d", len(due))
+            for d in due:
+                today_local = local_now(d["timezone"]).date()
+                async with db.system_tx() as conn:
+                    await debtrepo.mark_reminded(conn, d["id"], today_local)   # avval belgilaymiz (ikki marta ketmasin)
+                try:
+                    text = debt_svc.reminder_text(d, d["timezone"])
+                    await notifier.send(d["telegram_id"], text, reply_markup=kb.debt_reminder(str(d["id"]), d["direction"]))
+                    async with db.system_tx() as conn:
+                        await sysrepo.event(conn, "debt_reminder_sent", d["user_id"])
+                except Exception:  # noqa: BLE001
+                    log.exception("debt reminder failed")
+                await asyncio.sleep(0.05)
+        except Exception:  # noqa: BLE001
+            log.exception("debt reminder loop error")
+        await _sleep(600)
+
+
 async def cleanup_loop() -> None:
     while not _stop.is_set():
         try:
@@ -123,7 +151,7 @@ async def main() -> None:
         except NotImplementedError:
             pass
     log.info("worker started")
-    await asyncio.gather(daily_reports_loop(), reminders_loop(), cleanup_loop())
+    await asyncio.gather(daily_reports_loop(), reminders_loop(), debt_reminders_loop(), cleanup_loop())
     await bot.session.close()
     await db.close()
 

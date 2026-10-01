@@ -16,3 +16,4 @@ backups/
 *.log
 *.tar.gz
 /main.py
+*.tgz

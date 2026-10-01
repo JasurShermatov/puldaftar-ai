@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from app.core.timeutil import fmt_money, local_now, period_bounds, to_utc_range, tz
 from app.db.database import db
 from app.domain.models import User
+from app.repositories import debts as debtrepo
 from app.repositories import transactions as txrepo
 
 PERIOD_TITLES = {"day": "Kunlik", "week": "Haftalik", "month": "Oylik", "year": "Yillik"}
@@ -65,6 +66,26 @@ async def daily_report_text(user: User, day: date, *, final: bool = True) -> str
             top = cats[0]
             share = round(100 * top["total"] / totals["expense"]) if totals["expense"] else 0
             lines.append(f"🏆 Eng ko'p: {top['emoji'] or ''} {_e(top['name'])} — {fmt_money(top['total'])} ({share}%)")
+
+    # qarzlar: muddati yaqin / o'tgan
+    try:
+        async with db.user_tx(user.id) as conn:
+            dsum = await debtrepo.summary(conn, user.id)
+        if dsum["open_count"]:
+            parts = []
+            if dsum["given_open"]:
+                parts.append(f"sizga qaytarishlari kerak {fmt_money(dsum['given_open'])}")
+            if dsum["taken_open"]:
+                parts.append(f"siz qaytarishingiz kerak {fmt_money(dsum['taken_open'])}")
+            warn = ""
+            if dsum["overdue_count"]:
+                warn = f" · ⚠️ {dsum['overdue_count']} ta muddati o'tgan"
+            elif dsum["due_soon_count"]:
+                warn = f" · ⏰ {dsum['due_soon_count']} ta muddati yaqin"
+            lines.append(f"🤝 Qarzlar: {', '.join(parts)}{warn}")
+            lines.append("")
+    except Exception:  # noqa: BLE001  (qarz bo'limi hisobotni to'xtatmasin)
+        pass
 
     lines.append("━━━━━━━━━━━━━━━")
     stamp = f"{d} soat {user.report_time}" if final else f"{d} soat {local_now(user.timezone).strftime('%H:%M')}"
@@ -183,8 +204,15 @@ async def dashboard(user: User) -> dict:
         s, e = to_utc_range(ys, ye, tzn)
         out["categories_year"] = await txrepo.by_category(conn, user.id, s, e, "expense")
 
+        for p in ("day", "week", "month", "year"):
+            ps_, pe_ = period_bounds(p, today, tzn)
+            s, e = to_utc_range(ps_, pe_, tzn)
+            out[f"income_categories_{p}"] = await txrepo.by_category(conn, user.id, s, e, "income")
+
         recent = await txrepo.list_range(conn, user.id, datetime(2000, 1, 1, tzinfo=tz("UTC")),
                                          datetime(2100, 1, 1, tzinfo=tz("UTC")), limit=15)
+        out["debts"] = await debtrepo.summary(conn, user.id)
+        open_debts = await debtrepo.list_(conn, user.id, "open", limit=5)
 
     def ser(rows):
         return [{"period": r["period"].isoformat(), "expense": r["expense"], "income": r["income"],
@@ -192,6 +220,10 @@ async def dashboard(user: User) -> dict:
 
     out["charts"] = {"daily": ser(daily), "weekly": ser(weekly), "monthly": ser(monthly), "yearly": ser(yearly)}
     out["recent"] = [serialize_tx(r, tzn) for r in recent]
+    from app.services import debts as debt_svc
+    out["debts"]["items"] = [debt_svc.serialize(d, tzn, today) for d in open_debts]
+    # oy bo'yicha o'rtacha daromad (30 kun) — deterministik
+    out["avg_income_daily_30"] = sum(r["income"] for r in daily) // 30
     # o'rtachalar (AI emas — deterministik)
     exp30 = sum(r["expense"] for r in daily)
     out["avg_daily_30"] = exp30 // 30

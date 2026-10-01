@@ -3,19 +3,21 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { money, num, short } from "@/lib/format";
 
-type Point = { label: string; full: string; value: number };
+export type Series = { key: string; label: string; color: string; values: number[] };
+type Label = { label: string; full: string };
 
 type Props = {
-  points: Point[];
+  labels: Label[];
+  series: Series[];            // 1 yoki 2 ta chiziq (xarajat / daromad) — kesishsa ham alohida ko'rinadi
   height?: number;
   emptyText?: string;
   unit?: "money" | "count";
 };
 
-const PAD = { top: 22, right: 12, bottom: 24, left: 44 };
+const PAD = { top: 22, right: 12, bottom: 24, left: 46 };
 
-/** Yengil SVG line chart: gradient area, crosshair + tooltip (touch/mouse), eng yuqori nuqta belgisi. */
-export default function LineChart({ points, height = 170, emptyText = "Hali ma'lumot yo'q", unit = "money" }: Props) {
+/** Yengil SVG line chart: bir nechta chiziq, gradient area (bitta chiziqda), crosshair + tooltip (touch/mouse). */
+export default function LineChart({ labels, series, height = 180, emptyText = "Hali ma'lumot yo'q", unit = "money" }: Props) {
   const fmtTip = unit === "money" ? money : (v: number) => `${num(v)} ta`;
   const wrap = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(320);
@@ -31,35 +33,39 @@ export default function LineChart({ points, height = 170, emptyText = "Hali ma'l
   }, []);
 
   const geo = useMemo(() => {
-    const n = points.length;
-    const max = Math.max(0, ...points.map((p) => p.value));
+    const n = labels.length;
+    const max = Math.max(0, ...series.flatMap((s) => s.values));
     const niceMax = niceCeil(max || 1);
     const iw = width - PAD.left - PAD.right;
     const ih = height - PAD.top - PAD.bottom;
     const x = (i: number) => PAD.left + (n <= 1 ? iw / 2 : (iw * i) / (n - 1));
     const y = (v: number) => PAD.top + ih - (ih * v) / niceMax;
-    const xy = points.map((p, i) => [x(i), y(p.value)] as const);
-    const line = smoothPath(xy);
-    const area = xy.length ? `${line} L${xy[xy.length - 1][0]},${PAD.top + ih} L${xy[0][0]},${PAD.top + ih} Z` : "";
+    const lines = series.map((s) => {
+      const xy = labels.map((_, i) => [x(i), y(s.values[i] || 0)] as const);
+      const line = smoothPath(xy);
+      const area = xy.length ? `${line} L${xy[xy.length - 1][0]},${PAD.top + ih} L${xy[0][0]},${PAD.top + ih} Z` : "";
+      const maxIdx = s.values.reduce((b, v, i) => (v > (s.values[b] || 0) ? i : b), 0);
+      return { xy, line, area, maxIdx, max: Math.max(0, ...s.values) };
+    });
     const ticks = [0, niceMax / 2, niceMax];
-    const maxIdx = points.reduce((b, p, i) => (p.value > points[b].value ? i : b), 0);
     const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 58))));
-    return { xy, line, area, ticks, y, ih, iw, maxIdx, step, max };
-  }, [points, width, height]);
+    return { lines, ticks, y, x, ih, iw, step, max };
+  }, [labels, series, width, height]);
 
   const hasData = geo.max > 0;
 
   function onMove(clientX: number) {
     const el = wrap.current;
-    if (!el || !points.length) return;
+    if (!el || !labels.length) return;
     const r = el.getBoundingClientRect();
     const rel = clientX - r.left - PAD.left;
-    const i = Math.round((rel / geo.iw) * (points.length - 1));
-    setActive(Math.min(points.length - 1, Math.max(0, i)));
+    const i = Math.round((rel / geo.iw) * (labels.length - 1));
+    setActive(Math.min(labels.length - 1, Math.max(0, i)));
   }
 
-  const a = active != null ? points[active] : null;
-  const axy = active != null ? geo.xy[active] : null;
+  const a = active != null ? labels[active] : null;
+  const ax = active != null ? geo.x(active) : null;
+  const single = series.length === 1;
 
   return (
     <div
@@ -72,14 +78,16 @@ export default function LineChart({ points, height = 170, emptyText = "Hali ma'l
       onTouchMove={(e) => onMove(e.touches[0].clientX)}
       onTouchEnd={() => setTimeout(() => setActive(null), 1600)}
       role="img"
-      aria-label={`Grafik: ${points.map((p) => `${p.full} ${money(p.value)}`).join(", ")}`}
+      aria-label={`Grafik: ${series.map((s) => `${s.label} ${money(s.values.reduce((p, c) => p + c, 0))}`).join(", ")}`}
     >
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
         <defs>
-          <linearGradient id={`g${gid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.28" />
-            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-          </linearGradient>
+          {series.map((s) => (
+            <linearGradient key={s.key} id={`g${gid}${s.key}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={s.color} stopOpacity={single ? 0.26 : 0.12} />
+              <stop offset="100%" stopColor={s.color} stopOpacity="0" />
+            </linearGradient>
+          ))}
         </defs>
         {geo.ticks.map((t, i) => (
           <g key={i}>
@@ -89,43 +97,53 @@ export default function LineChart({ points, height = 170, emptyText = "Hali ma'l
             </text>
           </g>
         ))}
-        {points.map((p, i) =>
-          (i % geo.step === 0 && points.length - 1 - i >= geo.step * 0.7) || i === points.length - 1 ? (
-            <text key={i} x={geo.xy[i][0]} y={height - 6} className="axis" textAnchor={i === 0 ? "start" : i === points.length - 1 ? "end" : "middle"}>
+        {labels.map((p, i) =>
+          (i % geo.step === 0 && labels.length - 1 - i >= geo.step * 0.7) || i === labels.length - 1 ? (
+            <text key={i} x={geo.x(i)} y={height - 6} className="axis" textAnchor={i === 0 ? "start" : i === labels.length - 1 ? "end" : "middle"}>
               {p.label}
             </text>
           ) : null,
         )}
-        {hasData && <path d={geo.area} fill={`url(#g${gid})`} />}
-        <path d={geo.line} className="line" />
-        {hasData && geo.xy[geo.maxIdx] && active == null && (
+        {hasData &&
+          geo.lines.map((l, si) => (
+            <g key={series[si].key}>
+              <path d={l.area} fill={`url(#g${gid}${series[si].key})`} />
+              <path d={l.line} className="line" style={{ stroke: series[si].color }} />
+            </g>
+          ))}
+        {!hasData && geo.lines[0] && <path d={geo.lines[0].line} className="line" style={{ stroke: series[0]?.color, opacity: 0.35 }} />}
+        {hasData && single && active == null && geo.lines[0] && geo.lines[0].max > 0 && (
           <g>
-            <circle cx={geo.xy[geo.maxIdx][0]} cy={geo.xy[geo.maxIdx][1]} r={4} className="dot" />
-            <text
-              x={clampX(geo.xy[geo.maxIdx][0], width)}
-              y={geo.xy[geo.maxIdx][1] - 9}
-              className="peak"
-              textAnchor="middle"
-            >
-              {short(points[geo.maxIdx].value)}
+            <circle cx={geo.lines[0].xy[geo.lines[0].maxIdx][0]} cy={geo.lines[0].xy[geo.lines[0].maxIdx][1]} r={4} className="dot" style={{ fill: series[0].color }} />
+            <text x={clampX(geo.lines[0].xy[geo.lines[0].maxIdx][0], width)} y={geo.lines[0].xy[geo.lines[0].maxIdx][1] - 9} className="peak" textAnchor="middle">
+              {short(series[0].values[geo.lines[0].maxIdx])}
             </text>
           </g>
         )}
-        {geo.xy.length > 0 && active == null && (
-          <circle cx={geo.xy[geo.xy.length - 1][0]} cy={geo.xy[geo.xy.length - 1][1]} r={4} className="dot last" />
-        )}
-        {axy && (
+        {hasData && active == null &&
+          geo.lines.map((l, si) =>
+            l.xy.length ? <circle key={series[si].key} cx={l.xy[l.xy.length - 1][0]} cy={l.xy[l.xy.length - 1][1]} r={4} className="dot last" style={{ fill: series[si].color }} /> : null,
+          )}
+        {ax != null && (
           <g>
-            <line x1={axy[0]} x2={axy[0]} y1={PAD.top - 6} y2={PAD.top + geo.ih} className="cross" />
-            <circle cx={axy[0]} cy={axy[1]} r={5} className="dot active" />
+            <line x1={ax} x2={ax} y1={PAD.top - 6} y2={PAD.top + geo.ih} className="cross" />
+            {geo.lines.map((l, si) => (
+              <circle key={series[si].key} cx={l.xy[active!][0]} cy={l.xy[active!][1]} r={5} className="dot active" style={{ fill: series[si].color }} />
+            ))}
           </g>
         )}
       </svg>
       {!hasData && <div className="chart-empty">{emptyText}</div>}
-      {a && axy && (
-        <div className="tip" style={{ left: Math.min(Math.max(axy[0], 70), width - 70) }}>
+      {a && ax != null && (
+        <div className="tip" style={{ left: Math.min(Math.max(ax, 80), width - 80) }}>
           <div className="tip-l">{a.full}</div>
-          <div className="tip-v">{fmtTip(a.value)}</div>
+          {series.map((s) => (
+            <div key={s.key} className="tip-v">
+              {!single && <span className="tip-dot" style={{ background: s.color }} />}
+              {!single && <span className="tip-k">{s.label}</span>}
+              {fmtTip(s.values[active!] || 0)}
+            </div>
+          ))}
         </div>
       )}
     </div>

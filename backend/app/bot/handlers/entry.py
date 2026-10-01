@@ -21,8 +21,12 @@ from app.domain.models import User
 from app.repositories import categories as catrepo
 from app.repositories import system as sysrepo
 from app.repositories import transactions as txrepo
+from app.services import ai_chat, ratelimit
+from app.services import debts as debt_svc
 from app.services import transactions as tx_svc
+from app.services.access import access_of
 from app.services.ai import openai_client as ai
+from app.bot.states import AiChat
 from app.services.parsing.normalize import normalize, tokenize
 from app.services.parsing.numbers import find_amounts
 
@@ -49,15 +53,35 @@ async def _render_outcome(user: User, out: tx_svc.IngestOutcome, reply_to: Messa
         return await say(T.EXPIRED, kb.plan(True))
     if out.kind == "duplicate":
         return await say(T.DUPLICATE)
+    shown = False
+    if out.repaid:
+        await say(views.repaid_message(out.repaid, out.repay_status or "paid", user.timezone),
+                  kb.debt_actions(out.repaid) if out.repay_status == "partial" else None)
+        shown = True
     if out.saved:
-        await say(await views.saved_message(user, out.saved), kb.tx_actions(out.saved))
-        if out.pending_id:
-            await reply_to.answer(views.pending_message(out.pending_items, out.question),
-                                  reply_markup=kb.confirm_pending(str(out.pending_id)))
+        text = await views.saved_message(user, out.saved)
+        if shown:
+            await reply_to.answer(text, reply_markup=kb.tx_actions(out.saved))
+        else:
+            await say(text, kb.tx_actions(out.saved))
+        shown = True
+    if out.saved_debts:
+        text = views.debt_saved_message(out.saved_debts, user.timezone)
+        if shown:
+            await reply_to.answer(text, reply_markup=kb.debt_actions(out.saved_debts))
+        else:
+            await say(text, kb.debt_actions(out.saved_debts))
+        shown = True
+    if out.pending_id and (out.pending_items or out.pending_debts):
+        text = views.pending_message(out.pending_items, out.question, out.pending_debts, user.timezone)
+        markup = kb.confirm_pending(str(out.pending_id), alt_debt=out.has_alt_debt)
+        if shown:
+            await reply_to.answer(text, reply_markup=markup)
+        else:
+            await say(text, markup)
         return
-    if out.kind == "pending" and out.pending_id:
-        return await say(views.pending_message(out.pending_items, out.question),
-                         kb.confirm_pending(str(out.pending_id)))
+    if shown:
+        return
     if out.kind == "clarify":
         q = views.e(out.question or "Tushunmadim, qaytadan aniqroq yozing.")
         if out.pending_id and out.amount_options:
@@ -86,6 +110,25 @@ async def edit_amount_value(message: Message, state: FSMContext, user: User):
 
 # ---------------- Matn ----------------
 
+@router.message(AiChat.waiting, F.text & ~F.text.startswith("/"))
+async def on_ai_chat_text(message: Message, user: User):
+    await answer_ai_question(message, user, message.text.strip())
+
+
+async def answer_ai_question(message: Message, user: User, question: str):
+    if not access_of(user).can_ai:
+        return await message.answer(T.AI_CHAT_PRO, reply_markup=kb.plan(True))
+    if not await ratelimit.hit(f"aichat:{user.telegram_id}", 20, 3600):
+        return await message.answer(T.TOO_FAST)
+    await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    try:
+        res = await ai_chat.ask(user, question)
+    except Exception:  # noqa: BLE001
+        log.exception("ai chat failed")
+        return await message.answer(T.ERROR)
+    await message.answer(res["answer"], reply_markup=kb.ai_chat_exit())
+
+
 @router.message(F.text & ~F.text.startswith("/"))
 async def on_text(message: Message, user: User, state: FSMContext):
     await state.clear()
@@ -107,7 +150,8 @@ async def on_text(message: Message, user: User, state: FSMContext):
 
 @router.message(F.voice | F.audio | F.video_note)
 async def on_voice(message: Message, user: User, state: FSMContext):
-    await state.clear()
+    if await state.get_state() != AiChat.waiting.state:
+        await state.clear()
     s = get_settings()
     media = message.voice or message.audio or message.video_note
     if not s.ai_enabled:
@@ -140,16 +184,21 @@ async def on_voice(message: Message, user: User, state: FSMContext):
         return await status.edit_text(T.VOICE_FAIL)
     async with db.system_tx() as conn:
         await sysrepo.event(conn, "stt_success", user.id)
+    if await state.get_state() == AiChat.waiting.state:
+        await status.edit_text(f"🗣 <i>«{views.e(transcript[:300])}»</i>")
+        return await answer_ai_question(message, user, transcript)
     try:
         out = await tx_svc.ingest(user, transcript, source="voice",
                                   source_key=f"{message.chat.id}:{message.message_id}")
     except Exception:  # noqa: BLE001
         log.exception("ingest failed")
         return await status.edit_text(T.ERROR)
-    heard = f"🗣 <i>«{views.e(transcript[:300])}»</i>\n\n"
-    if out.saved or out.kind in ("pending", "clarify", "expired", "duplicate"):
-        # eshitilgan matnni ko'rsatamiz — user xatoni darhol ko'radi
-        await status.edit_text(heard + "⬇️")
+    heard = f"🗣 <i>«{views.e(transcript[:300])}»</i>"
+    # eshitilgan matnni ko'rsatamiz — user xatoni darhol ko'radi
+    try:
+        await status.edit_text(heard)
+    except Exception:  # noqa: BLE001
+        pass
     await _render_outcome(user, out, message)
 
 
@@ -162,12 +211,19 @@ async def pending_cb(cb: CallbackQuery, user: User):
         pid = UUID(parts[2])
     except (IndexError, ValueError):
         return await cb.answer()
-    if parts[1] == "ok":
-        saved = await tx_svc.confirm_pending(user, pid)
+    if parts[1] in ("ok", "debt"):
+        res = await tx_svc.confirm_pending(user, pid, choice="debt" if parts[1] == "debt" else "ok")
         await cb.answer()
-        if not saved:
+        if not res.ok:
             return await cb.message.edit_text("Bu so'rov eskirgan yoki allaqachon saqlangan.")
-        await cb.message.edit_text(await views.saved_message(user, saved), reply_markup=kb.tx_actions(saved))
+        if res.saved:
+            await cb.message.edit_text(await views.saved_message(user, res.saved), reply_markup=kb.tx_actions(res.saved))
+        if res.saved_debts:
+            text = views.debt_saved_message(res.saved_debts, user.timezone)
+            if res.saved:
+                await cb.message.answer(text, reply_markup=kb.debt_actions(res.saved_debts))
+            else:
+                await cb.message.edit_text(text, reply_markup=kb.debt_actions(res.saved_debts))
     elif parts[1] == "no":
         await tx_svc.cancel_pending(user, pid)
         await cb.answer()
@@ -228,3 +284,50 @@ async def tx_cb(cb: CallbackQuery, user: User, state: FSMContext):
         await cb.answer(T.RESTORED if ok else T.NOT_FOUND)
         if ok:
             await cb.message.edit_text(T.RESTORED)
+
+
+# ---------------- Callback: qarzlar ----------------
+
+@router.callback_query(F.data.startswith("dbt:"))
+async def debt_cb(cb: CallbackQuery, user: User):
+    parts = cb.data.split(":")
+    action = parts[1]
+    try:
+        debt_id = UUID(parts[2])
+    except (IndexError, ValueError):
+        return await cb.answer()
+
+    if action == "paid":
+        row = await debt_svc.pay(user, debt_id, None)
+        if not row:
+            return await cb.answer(T.NOT_FOUND, show_alert=True)
+        await cb.answer(T.DEBT_PAID)
+        return await cb.message.edit_text(views.repaid_message([row], "paid", user.timezone))
+
+    if action == "due":
+        await cb.answer()
+        return await cb.message.answer(T.DEBT_DUE_PICK, reply_markup=kb.debt_due_options(str(debt_id)))
+
+    if action == "snooze" and len(parts) == 4 and parts[3].isdigit():
+        row = await debt_svc.snooze(user, debt_id, int(parts[3]))
+        if not row:
+            return await cb.answer(T.NOT_FOUND, show_alert=True)
+        from app.core.timeutil import tz as _tz
+        date_s = row["due_at"].astimezone(_tz(user.timezone)).strftime("%d.%m.%Y")
+        await cb.answer(T.DEBT_SNOOZED.format(date=date_s))
+        try:
+            await cb.message.edit_text(views.debt_saved_message([row], user.timezone).replace("Qarz yozildi", "Muddat yangilandi"),
+                                       reply_markup=kb.debt_actions([row]))
+        except Exception:  # noqa: BLE001
+            await cb.message.answer(views.debt_saved_message([row], user.timezone).replace("Qarz yozildi", "Muddat yangilandi"),
+                                    reply_markup=kb.debt_actions([row]))
+        return
+
+    if action == "del":
+        ok = await debt_svc.delete(user, debt_id)
+        await cb.answer(T.DEBT_DELETED if ok else T.NOT_FOUND)
+        if ok:
+            try:
+                await cb.message.edit_text(T.DEBT_DELETED)
+            except Exception:  # noqa: BLE001
+                pass

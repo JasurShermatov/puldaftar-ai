@@ -8,7 +8,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.api.deps import current_user
-from app.api.schemas import CategoryIn, CategoryPatch, ExportIn, Period, SettingsIn, TextIn, TxCreate, TxUpdate
+from app.api.schemas import (CategoryIn, CategoryPatch, ChatIn, DebtCreate, DebtPatch, DebtPay, ExportIn, Period,
+                             SettingsIn, TextIn, TxCreate, TxUpdate)
 from app.core.config import get_settings
 from app.core.security import InitDataError, sign_token, verify_token
 from app.core.timeutil import local_now, period_bounds, to_utc_range
@@ -17,6 +18,8 @@ from app.domain.models import User
 from app.repositories import categories as catrepo
 from app.repositories import transactions as txrepo
 from app.repositories import users as userrepo
+from app.services import ai_chat
+from app.services import debts as debt_svc
 from app.services import export as export_svc
 from app.services import insights as insight_svc
 from app.services import notifier, ratelimit
@@ -106,20 +109,33 @@ async def create_from_text(body: TextIn, user: User = Depends(current_user)):
     if not await ratelimit.hit(f"parse:{user.telegram_id}", get_settings().rate_limit_per_minute):
         raise HTTPException(429, "Juda tez, biroz kuting")
     out = await tx_svc.ingest(user, body.text, source="text", source_key=None)
+    return _ingest_json(out, user)
+
+
+def _ingest_json(out: tx_svc.IngestOutcome, user: User) -> dict:
+    today = local_now(user.timezone).date()
     return {
         "kind": out.kind,
         "saved": [report_svc.serialize_tx(r, user.timezone) for r in out.saved],
+        "saved_debts": [debt_svc.serialize(d, user.timezone, today) for d in out.saved_debts],
+        "repaid": [debt_svc.serialize(d, user.timezone, today) for d in out.repaid],
+        "repay_status": out.repay_status,
         "pending_id": str(out.pending_id) if out.pending_id else None,
         "pending_items": out.pending_items,
+        "pending_debts": out.pending_debts,
+        "has_alt_debt": out.has_alt_debt,
         "question": out.question,
         "amount_options": out.amount_options,
     }
 
 
 @router.post("/pending/{pending_id}/confirm")
-async def confirm_pending(pending_id: UUID, user: User = Depends(current_user)):
-    saved = await tx_svc.confirm_pending(user, pending_id)
-    return {"saved": [report_svc.serialize_tx(r, user.timezone) for r in saved]}
+async def confirm_pending(pending_id: UUID, choice: str = Query(default="ok", pattern="^(ok|debt)$"),
+                          user: User = Depends(current_user)):
+    res = await tx_svc.confirm_pending(user, pending_id, choice=choice)
+    today = local_now(user.timezone).date()
+    return {"saved": [report_svc.serialize_tx(r, user.timezone) for r in res.saved],
+            "saved_debts": [debt_svc.serialize(d, user.timezone, today) for d in res.saved_debts]}
 
 
 @router.post("/pending/{pending_id}/amount/{amount}")
@@ -192,6 +208,81 @@ async def insights(kind: str = Query(default="weekly", pattern="^(daily|weekly)$
     text = await insight_svc.generate(user, kind, force=refresh)
     stats = await insight_svc.compute_stats(user)
     return {"text": text, "stats": stats}
+
+
+# ---------------- Qarzlar ----------------
+
+@router.get("/debts")
+async def debts_list(status: str = Query(default="open", pattern="^(open|paid|all)$"),
+                     user: User = Depends(current_user)):
+    return await debt_svc.list_debts(user, None if status == "all" else status)
+
+
+@router.post("/debts")
+async def debts_create(body: DebtCreate, user: User = Depends(current_user)):
+    if not access_of(user).can_add:
+        raise HTTPException(402, "PRO kerak")
+    row = await debt_svc.create_manual(user, direction=body.direction, amount=body.amount,
+                                       counterparty=body.counterparty.strip(), note=body.note.strip(),
+                                       due_at=body.due_at, occurred_at=body.occurred_at)
+    if not row:
+        raise HTTPException(422, "saqlab bo'lmadi")
+    return debt_svc.serialize(row, user.timezone)
+
+
+@router.patch("/debts/{debt_id}")
+async def debts_update(debt_id: UUID, body: DebtPatch, user: User = Depends(current_user)):
+    row = await debt_svc.update(user, debt_id, amount=body.amount, counterparty=body.counterparty, note=body.note,
+                                due_at=body.due_at, clear_due=body.clear_due)
+    if not row:
+        raise HTTPException(404, "topilmadi")
+    return debt_svc.serialize(row, user.timezone)
+
+
+@router.post("/debts/{debt_id}/pay")
+async def debts_pay(debt_id: UUID, body: DebtPay, user: User = Depends(current_user)):
+    row = await debt_svc.pay(user, debt_id, body.amount)
+    if not row:
+        raise HTTPException(404, "topilmadi yoki allaqachon yopilgan")
+    return debt_svc.serialize(row, user.timezone)
+
+
+@router.post("/debts/{debt_id}/reopen")
+async def debts_reopen(debt_id: UUID, user: User = Depends(current_user)):
+    if not await debt_svc.reopen(user, debt_id):
+        raise HTTPException(404, "topilmadi")
+    return {"ok": True}
+
+
+@router.delete("/debts/{debt_id}")
+async def debts_delete(debt_id: UUID, user: User = Depends(current_user)):
+    if not await debt_svc.delete(user, debt_id):
+        raise HTTPException(404, "topilmadi")
+    return {"ok": True}
+
+
+# ---------------- AI chat ----------------
+
+@router.get("/ai/chat")
+async def chat_history(user: User = Depends(current_user)):
+    return {"messages": await ai_chat.history(user), "suggestions": ai_chat.SUGGESTIONS,
+            "ai_enabled": get_settings().ai_enabled}
+
+
+@router.post("/ai/chat")
+async def chat_ask(body: ChatIn, user: User = Depends(current_user)):
+    if not access_of(user).can_ai:
+        raise HTTPException(402, "PRO kerak")
+    if not await ratelimit.hit(f"aichat:{user.telegram_id}", 20, 3600):
+        raise HTTPException(429, "Soatiga 20 ta savol. Biroz kuting.")
+    res = await ai_chat.ask(user, body.message)
+    return {"answer": res["answer"], "ai": res["ai"]}
+
+
+@router.delete("/ai/chat")
+async def chat_clear(user: User = Depends(current_user)):
+    await ai_chat.clear(user)
+    return {"ok": True}
 
 
 @router.post("/export")

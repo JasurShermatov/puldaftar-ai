@@ -33,8 +33,11 @@ HALF = {"yarim", "polovina", "pol", "half"}
 MULTIPLIERS = {**{w: 1_000 for w in THOUSAND}, **{w: 1_000_000 for w in MILLION}, **{w: 1_000_000_000 for w in BILLION}}
 CURRENCY = {"so'm", "som", "sum", "sumdan", "so'mlik", "somlik", "uzs", "sw", "sm", "soums", "soum"}
 # Summadan keyin kelsa — bu miqdor (dona/kg), pul emas
-COUNTERS = {"ta", "dona", "kg", "kilo", "gramm", "gr", "litr", "l", "kishi", "marta", "kun", "kunlik", "oy",
-            "yil", "soat", "minut", "daqiqa", "shtuk", "sht", "metr", "m2", "qop", "pachka", "blok", "foiz", "%"}
+COUNTERS = {"ta", "dona", "kg", "kilo", "gramm", "gr", "litr", "l", "kishi", "marta", "kun", "kunlik", "kunga", "kunda",
+            "oy", "oyga", "oylik", "oyda", "hafta", "haftaga", "haftalik", "haftada", "yil", "yilga", "soat", "minut",
+            "daqiqa", "shtuk", "sht", "metr", "m2", "qop", "pachka", "blok", "foiz", "%",
+            "den", "dnya", "dney", "nedelya", "nedelyu", "nedeli", "nedel", "mesyats", "mesyatsa", "mesyatsev",
+            "day", "days", "week", "weeks", "month", "months"}
 MONTHS = {
     "yanvar": 1, "fevral": 2, "mart": 3, "aprel": 4, "may": 5, "iyun": 6, "iyul": 7, "avgust": 8,
     "sentabr": 9, "sentyabr": 9, "oktabr": 10, "oktyabr": 10, "noyabr": 11, "dekabr": 12,

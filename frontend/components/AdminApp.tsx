@@ -105,10 +105,10 @@ function StatsTab() {
         ))}
       </div>
       <Card title="🧾 Kunlik yozuvlar (30 kun)">
-        <LineChart points={s.daily.map((d) => ({ label: dayLabel(d.day), full: dateOf(d.day), value: d.tx }))} height={150} unit="count" />
+        <LineChart labels={s.daily.map((d) => ({ label: dayLabel(d.day), full: dateOf(d.day) }))} series={[{ key: "tx", label: "Yozuvlar", color: "var(--accent)", values: s.daily.map((d) => d.tx) }]} height={150} unit="count" />
       </Card>
       <Card title="👥 Yangi userlar (30 kun)">
-        <LineChart points={s.daily.map((d) => ({ label: dayLabel(d.day), full: dateOf(d.day), value: d.new_users }))} height={150} unit="count" />
+        <LineChart labels={s.daily.map((d) => ({ label: dayLabel(d.day), full: dateOf(d.day) }))} series={[{ key: "u", label: "Userlar", color: "var(--accent)", values: s.daily.map((d) => d.new_users) }]} height={150} unit="count" />
       </Card>
       <Card title="📈 Hodisalar (24 soat)">
         <div className="kv">

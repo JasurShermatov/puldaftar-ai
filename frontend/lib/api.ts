@@ -69,6 +69,32 @@ export type Me = {
 
 export type Plan = { code: string; name: string; days: number; price: number; old_price: number | null; badge: string | null; is_active?: boolean; sort?: number };
 
+export type Debt = {
+  id: string;
+  direction: "given" | "taken";
+  amount: number;
+  paid_amount: number;
+  remaining: number;
+  counterparty: string;
+  note: string;
+  status: "open" | "paid";
+  occurred_at: string;
+  due_at: string | null;
+  days_left: number | null;
+  overdue: boolean;
+  paid_at: string | null;
+  source: string;
+};
+export type DebtSummary = {
+  given_open: number;
+  taken_open: number;
+  open_count: number;
+  overdue_count: number;
+  due_soon_count: number;
+  next_due: string | null;
+};
+export type DebtList = { items: Debt[]; summary: DebtSummary };
+
 export type Dashboard = {
   today: string;
   totals_day: Totals;
@@ -80,18 +106,35 @@ export type Dashboard = {
   categories_week: CatTotal[];
   categories_month: CatTotal[];
   categories_year: CatTotal[];
+  income_categories_day: CatTotal[];
+  income_categories_week: CatTotal[];
+  income_categories_month: CatTotal[];
+  income_categories_year: CatTotal[];
   recent: Tx[];
   avg_daily_30: number;
   avg_weekly_12: number;
+  avg_income_daily_30: number;
+  debts: DebtSummary & { items: Debt[] };
 };
 
 export type TxList = { period: string; start: string; end: string; totals: Totals; categories: CatTotal[]; items: Tx[] };
 
+export type PendingItem = { type: string; amount: number; category_name: string; category_emoji: string; description: string };
+export type PendingDebt = { direction: "given" | "taken"; amount: number; counterparty: string; note: string; due_at: string | null };
+
 export type IngestResult = {
   kind: "saved" | "pending" | "clarify" | "expired" | "duplicate" | "empty";
   saved: Tx[];
+  saved_debts: Debt[];
+  repaid: Debt[];
+  repay_status: "paid" | "partial" | "ambiguous" | "none" | null;
   pending_id: string | null;
-  pending_items: Array<{ type: string; amount: number; category_name: string; category_emoji: string; description: string }>;
+  pending_items: PendingItem[];
+  pending_debts: PendingDebt[];
+  has_alt_debt: boolean;
   question: string | null;
   amount_options: number[];
 };
+
+export type ChatMsg = { id: number; role: "user" | "assistant"; content: string; created_at: string };
+export type ChatHistory = { messages: ChatMsg[]; suggestions: string[]; ai_enabled: boolean };

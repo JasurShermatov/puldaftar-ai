@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from app.core.timeutil import local_now, period_bounds, to_utc_range, tz
 from app.db.database import db
 from app.domain.models import User
+from app.repositories import debts as debtrepo
 from app.repositories import system as sysrepo
 from app.repositories import transactions as txrepo
 
@@ -153,6 +154,23 @@ async def export_xlsx(user: User, period: str, day: date | None = None) -> tuple
         lc.set_categories(Reference(ws, min_col=1, min_row=2, max_row=len(series) + 1))
         lc.height, lc.width = 9, 18
         ws.add_chart(lc, "E2")
+
+    # 5) Qarzlar (barcha ochiq + shu davrda yopilganlar)
+    async with db.user_tx(user.id) as conn:
+        debts = await debtrepo.list_(conn, user.id, None, limit=500)
+    ws = wb.create_sheet("Qarzlar")
+    header(ws, ["Yo'nalish", "Kim bilan", "Summa", "Qaytarilgan", "Qoldiq", "Berilgan sana", "Muddat", "Holat", "Izoh"])
+    for d in debts:
+        ws.append(["Men berdim" if d["direction"] == "given" else "Men oldim", _csv_safe(d["counterparty"]),
+                   d["amount"], d["paid_amount"], d["remaining"], d["occurred_at"].astimezone(z).date(),
+                   d["due_at"].astimezone(z).date() if d["due_at"] else "",
+                   "Ochiq" if d["status"] == "open" else "Yopilgan", _csv_safe(d["note"])])
+        for col in (3, 4, 5):
+            ws.cell(ws.max_row, col).number_format = "#,##0"
+        ws.cell(ws.max_row, 6).number_format = "DD.MM.YYYY"
+        ws.cell(ws.max_row, 7).number_format = "DD.MM.YYYY"
+    for i, wdt in enumerate([12, 20, 14, 14, 14, 14, 12, 10, 24], 1):
+        ws.column_dimensions[get_column_letter(i)].width = wdt
 
     bio = io.BytesIO()
     wb.save(bio)

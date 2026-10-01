@@ -33,6 +33,31 @@ class TextIn(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
+class DebtCreate(BaseModel):
+    direction: Literal["given", "taken"]
+    amount: int = Field(gt=0, lt=1_000_000_000_000)
+    counterparty: str = Field(default="", max_length=40)
+    note: str = Field(default="", max_length=60)
+    due_at: datetime | None = None
+    occurred_at: datetime | None = None
+
+
+class DebtPatch(BaseModel):
+    amount: int | None = Field(default=None, gt=0, lt=1_000_000_000_000)
+    counterparty: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=60)
+    due_at: datetime | None = None
+    clear_due: bool = False
+
+
+class DebtPay(BaseModel):
+    amount: int | None = Field(default=None, gt=0, lt=1_000_000_000_000)   # None = to'liq
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=600)
+
+
 class CategoryIn(BaseModel):
     type: Literal["expense", "income"] = "expense"
     name: str = Field(min_length=1, max_length=40)

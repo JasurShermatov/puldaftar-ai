@@ -12,10 +12,11 @@ from uuid import UUID
 
 from app.core.timeutil import local_now
 from app.db.database import db
-from app.domain.models import ParsedItem, User
+from app.domain.models import ParsedDebt, ParsedItem, User
 from app.repositories import categories as catrepo
 from app.repositories import system as sysrepo
 from app.repositories import transactions as txrepo
+from app.services import debts as debt_svc
 from app.services.access import access_of
 from app.services.parsing.local_parser import parse_local
 from app.services.parsing.pipeline import parse_text
@@ -26,11 +27,21 @@ log = logging.getLogger(__name__)
 @dataclass
 class IngestOutcome:
     kind: str                                   # saved | pending | clarify | expired | duplicate | empty
-    saved: list[dict] = field(default_factory=list)
+    saved: list[dict] = field(default_factory=list)            # saqlangan tranzaksiyalar
+    saved_debts: list[dict] = field(default_factory=list)      # saqlangan qarzlar
+    repaid: list[dict] = field(default_factory=list)           # yopilgan/qisman qaytarilgan qarzlar
+    repay_status: str | None = None                            # paid | partial | ambiguous | none
     pending_id: UUID | None = None
-    pending_items: list[dict] = field(default_factory=list)
+    pending_items: list[dict] = field(default_factory=list)    # tasdiq kutayotgan tranzaksiyalar (ko'rsatish uchun)
+    pending_debts: list[dict] = field(default_factory=list)    # tasdiq kutayotgan qarzlar
+    has_alt_debt: bool = False                                 # "🤝 Bu qarz" tugmasi kerakmi
     question: str | None = None
     amount_options: list[int] = field(default_factory=list)
+    transcript: str | None = None
+
+    @property
+    def anything_saved(self) -> bool:
+        return bool(self.saved or self.saved_debts or self.repaid)
 
 
 def _aware(dt: datetime | None, tz_name: str) -> datetime | None:
@@ -68,7 +79,7 @@ async def save_items(user: User, items: list[ParsedItem], source: str, source_ke
             cat_id = await _resolve_category(conn, user.id, it, cats)
             row = await txrepo.insert(
                 conn, user.id, type_=it.type.value, amount=it.amount, category_id=cat_id,
-                description=it.description, occurred_at=it.occurred_at, source=source,
+                description=it.description, occurred_at=_aware(it.occurred_at, user.timezone), source=source,
                 confidence=it.confidence, source_key=f"{source_key}:{idx}" if source_key else None,
             )
             if row:
@@ -79,7 +90,26 @@ async def save_items(user: User, items: list[ParsedItem], source: str, source_ke
     return saved
 
 
+async def save_debts(user: User, debts: list[ParsedDebt], source: str, source_key: str | None) -> list[dict]:
+    saved: list[dict] = []
+    for idx, d in enumerate(debts):
+        row = await debt_svc.create(user, d, source=source, source_key=f"{source_key}:d{idx}" if source_key else None)
+        if row:
+            saved.append(row)
+    return saved
+
+
+def _view_item(i: ParsedItem, cats: dict[str, dict]) -> dict:
+    c = cats.get(i.category_key) or {}
+    return {**i.model_dump(mode="json"), "category_name": c.get("name", "Boshqa"), "category_emoji": c.get("emoji", "•")}
+
+
 async def ingest(user: User, text: str, *, source: str, source_key: str | None, force: bool = False) -> IngestOutcome:
+    """Matn/ovoz → parse → (avto-saqlash | tasdiq so'rash | savol).
+
+    Ishonchlilik: >= auto_th (odatda 0.85) — avtomatik saqlanadi; undan past bo'lsa (summa bo'lsa ham) —
+    «✅ Tasdiqlash / ❌ Bekor» tugmalari bilan ko'rsatiladi; summa umuman topilmasa — savol.
+    """
     if not access_of(user).can_add:
         return IngestOutcome(kind="expired")
 
@@ -87,10 +117,45 @@ async def ingest(user: User, text: str, *, source: str, source_key: str | None, 
         cats = await catrepo.key_map(conn, user.id)
     allowed = {k: c["type"] for k, c in cats.items()}
 
-    result = await parse_text(text, user.timezone, allowed)   # tashqi AI chaqiruvi DB tranzaksiyasidan tashqarida
-    auto_th, confirm_th = await _thresholds()
+    result = await parse_text(text, user.timezone, allowed, source=source)   # AI chaqiruvi DB tranzaksiyasidan tashqarida
+    auto_th, _confirm_th = await _thresholds()
 
-    if not result.items:
+    # ---- Qarz qaytarildi ----
+    if result.repayments:
+        out = IngestOutcome(kind="saved")
+        rep = result.repayments[0]
+        status, rows = await debt_svc.apply_repayment(user, rep)
+        out.repay_status = status
+        if status in ("paid", "partial"):
+            out.repaid = rows
+            return out
+        # mos qarz topilmadi → pul harakati sifatida tasdiq so'raymiz
+        if rep.amount:
+            who = rep.counterparty
+            if rep.direction == "given":
+                item = ParsedItem(type="income", amount=rep.amount, category_key="refund",
+                                  description=f"{who} qarzini qaytardi".strip(), occurred_at=local_now(user.timezone),
+                                  confidence=0.7)
+                q = "Bunday ochiq qarz topilmadi. Qaytarilgan pul sifatida (daromad) yozaymi?"
+            else:
+                item = ParsedItem(type="expense", amount=rep.amount, category_key="other",
+                                  description=f"{who}ga qarz qaytardim".strip() if who else "qarz qaytardim",
+                                  occurred_at=local_now(user.timezone), confidence=0.7)
+                q = "Bunday ochiq qarz topilmadi. Xarajat sifatida yozaymi?"
+            payload = {"kind": "confirm", "items": [item.model_dump(mode="json")], "debts": [], "alt_debt": None}
+            async with db.user_tx(user.id) as conn:
+                out.pending_id = await sysrepo.save_pending(conn, user.id, payload, source,
+                                                            f"{source_key}:c" if source_key else None)
+            out.pending_items = [_view_item(item, cats)]
+            out.question = q
+            out.kind = "pending"
+            return out
+        out.kind = "clarify"
+        out.question = ("Bir nechta mos qarz bor — Qarzlar bo'limidan tanlang." if status == "ambiguous"
+                        else "Bunday ochiq qarz topilmadi. Qarzlar bo'limini tekshiring.")
+        return out
+
+    if result.is_empty:
         out = IngestOutcome(kind="clarify", question=result.clarification_question,
                             amount_options=result.amount_options)
         if result.amount_options:
@@ -101,45 +166,72 @@ async def ingest(user: User, text: str, *, source: str, source_key: str | None, 
                 )
         return out
 
-    auto = [i for i in result.items if force or i.confidence >= auto_th]
-    confirm = [i for i in result.items if not force and confirm_th <= i.confidence < auto_th]
-    too_low = [i for i in result.items if not force and i.confidence < confirm_th]
+    auto_items = [i for i in result.items if force or i.confidence >= auto_th]
+    confirm_items = [i for i in result.items if not force and i.confidence < auto_th]
+    auto_debts = [d for d in result.debts if force or d.confidence >= auto_th]
+    confirm_debts = [d for d in result.debts if not force and d.confidence < auto_th]
 
     out = IngestOutcome(kind="saved")
-    if auto:
-        out.saved = await save_items(user, auto, source, source_key)
-        if not out.saved and source_key:
-            out.kind = "duplicate"
-    if confirm:
-        payload = {"kind": "confirm", "items": [i.model_dump(mode="json") for i in confirm]}
+    if auto_items:
+        out.saved = await save_items(user, auto_items, source, source_key)
+    if auto_debts:
+        out.saved_debts = await save_debts(user, auto_debts, source, source_key)
+    if (auto_items or auto_debts) and not out.anything_saved and source_key:
+        out.kind = "duplicate"
+    if confirm_items or confirm_debts:
+        alt = result.alt_debt if (result.alt_debt and any(i.amount == result.alt_debt.amount for i in confirm_items)) else None
+        payload = {"kind": "confirm", "items": [i.model_dump(mode="json") for i in confirm_items],
+                   "debts": [d.model_dump(mode="json") for d in confirm_debts],
+                   "alt_debt": alt.model_dump(mode="json") if alt else None}
         async with db.user_tx(user.id) as conn:
             out.pending_id = await sysrepo.save_pending(conn, user.id, payload, source,
                                                         f"{source_key}:c" if source_key else None)
-        out.pending_items = []
-        for i in confirm:
-            c = cats.get(i.category_key) or {}
-            out.pending_items.append({**i.model_dump(mode="json"), "category_name": c.get("name", "Boshqa"),
-                                      "category_emoji": c.get("emoji", "•")})
+        out.pending_items = [_view_item(i, cats) for i in confirm_items]
+        out.pending_debts = [d.model_dump(mode="json") for d in confirm_debts]
+        out.has_alt_debt = alt is not None
         out.question = result.clarification_question
-        out.kind = "pending" if not out.saved else "saved"
-    if too_low:
-        q = result.clarification_question or "Ba'zi qismini yaxshi tushunmadim. Summani va nimaga ketganini aniqroq ayting."
-        if not auto and not confirm:
-            out.kind = "clarify"
-        out.question = out.question or q
+        out.kind = "pending" if not out.anything_saved else "saved"
     return out
 
 
-async def confirm_pending(user: User, pending_id: UUID) -> list[dict]:
+@dataclass
+class ConfirmOutcome:
+    saved: list[dict] = field(default_factory=list)
+    saved_debts: list[dict] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.saved or self.saved_debts)
+
+
+async def confirm_pending(user: User, pending_id: UUID, choice: str = "ok") -> ConfirmOutcome:
+    """choice: ok — ko'rsatilganidek saqlash; debt — «🤝 Bu qarz» (alternativ talqin)."""
     async with db.user_tx(user.id) as conn:
         popped = await sysrepo.pop_pending(conn, user.id, pending_id)
+    out = ConfirmOutcome()
     if not popped:
-        return []
+        return out
     payload, source, source_key = popped
     if payload.get("kind") != "confirm":
-        return []
-    items = [ParsedItem(**i) for i in payload["items"]]
-    return await save_items(user, items, source, source_key)
+        return out
+    if not access_of(user).can_add:
+        return out
+    items = [ParsedItem(**i) for i in payload.get("items", [])]
+    debts = [ParsedDebt(**d) for d in payload.get("debts", [])]
+    alt = payload.get("alt_debt")
+    if choice == "debt" and alt:
+        alt_debt = ParsedDebt(**alt)
+        items = [i for i in items if i.amount != alt_debt.amount]
+        debts.append(alt_debt)
+    for i in items:
+        i.confidence = 1.0
+    for d in debts:
+        d.confidence = 1.0
+    if items:
+        out.saved = await save_items(user, items, source, source_key)
+    if debts:
+        out.saved_debts = await save_debts(user, debts, source, source_key)
+    return out
 
 
 async def cancel_pending(user: User, pending_id: UUID) -> None:

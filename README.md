@@ -15,13 +15,25 @@ AI tahlil, Excel/CSV eksport, 7 kunlik bepul sinov + qo'lda tasdiqlanadigan to'l
 - **Har kuni 23:59** (sozlanadi) chiroyli hisobot: har bir yozuv nomi, vaqti, summasi va oxirida
   `📅 30.09.2026 soat 23:59 · 💸 Umumiy xarajat: 5 000 000 so'm`.
 - Har kuni qisqa AI tahlil, yakshanba — haftalik chuqur tahlil («ovqatga haftasiga o'rtacha 612 ming ketyapti…»).
-- Tugmalar: 📊 Dashboard · 📅 Bugun · 📈 Hisobotlar · 🧠 AI tahlil · 📥 Yuklab olish · 💳 Obuna · ⚙️ Sozlamalar · ❓ Yordam.
+- **Ma'noni tushunadi:** «100 ming topib oldim / yutib oldim» → daromad (🍀 Topilgan pul); «50 ming yo'qotib qo'ydim / o'g'irlatdim» → xarajat (🕳 Yo'qotish).
+- **Qarzlar:** «Jasurga 100 ming qarz berdim 2 kunga», «Akmaldan 500 ming qarz oldim bir haftaga», «Дал в долг Азизу 200 тысяч на неделю»,
+  «Jasur qarzini qaytardi» — kim, qancha, qachongacha avtomatik ajratiladi. Muddatgacha 3 kun qolganda va muddati o'tganda
+  har kuni ertalab (09:00) eslatma: *«Jasurga 100 ming qarz bergan edingiz, 2 kun qoldi — so'rab ko'ring»* / *«Akmaldan 500 ming qarz olgansiz, unutmang»*.
+  Eslatma ostida ✅ Qaytardi · ⏰ +3 kun tugmalari. `/debts` yoki 🤝 Qarzlar tugmasi — ro'yxat.
+- **Ishonchlilik:** ≥ 85% — avtomatik saqlanadi; pastroq bo'lsa (summa bo'lsa ham) — «✅ Tasdiqlash / ❌ Bekor» (va kerak bo'lsa «🤝 Bu qarz edi»)
+  tugmalari bilan ko'rsatiladi; summa topilmasa — savol. Ovoz uchun: STT (gpt-4o-transcribe, whisper-1 zaxira) + tipik xatolarni tuzatish
+  + LLM parser ovoz kontekstini biladi.
+- **AI suhbat:** `/ai nimaga ko'p xarajat qilyapman?` yoki 🧠 AI tahlil → «💬 Savol berish» — faqat shu userning o'z ma'lumotlari
+  (xarajat/daromad/kategoriya/qarzlar, SQL bilan hisoblangan) asosida javob; suhbat tarixi shifrlangan holda saqlanadi, ma'lumot ko'paygan sari aniqroq.
+- Tugmalar: 📊 Dashboard · 📅 Bugun · 📈 Hisobotlar · 🧠 AI tahlil · 🤝 Qarzlar · 📥 Yuklab olish · 💳 Obuna · ⚙️ Sozlamalar · ❓ Yordam.
 
 **Mini App (Dashboard)**
-- Bugungi xarajat, hafta/oy/yil KPI.
-- Ketma-ket 4 ta line grafik: **kunlik (30 kun) → haftalik (12 hafta) → oylik (12 oy) → yillik**. Barmoq bilan surib aniq summani ko'rish.
-- Kategoriyalar ulushi (kun/hafta/oy/yil), tarix (sana bo'yicha varaqlash, tahrirlash, o'chirish), qo'lda yoki matn bilan qo'shish.
-- AI tahlil sahifasi, Excel (.xlsx — grafiklari bilan) / CSV yuklab olish yoki bot chatiga yuborish.
+- Bugungi xarajat **va daromad**, hafta/oy/yil KPI (xarajat + daromad), oylik sof natija (+/−) chizig'i.
+- Ketma-ket 4 ta line grafik: **kunlik (30 kun) → haftalik (12 hafta) → oylik (12 oy) → yillik** — xarajat (qizil) va daromad (yashil)
+  alohida chiziqlar, «Ikkalasi / Xarajat / Daromad» tanlovi, barmoq bilan surib ikkala qiymatni ko'rish.
+- «Nimaga ketyapti» / «Nimadan kelyapti» — kategoriyalar ulushi (kun/hafta/oy/yil), tarix (sana bo'yicha varaqlash, filtr, tahrirlash).
+- 🤝 **Qarzlar** sahifasi: sizga qaytarishadi / siz qaytarasiz, muddat belgilari (yashil/sariq/qizil), qisman qaytarish, muddatni o'zgartirish, yopilganlar.
+- 💬 **AI** sahifasi: suhbat (tayyor savollar bilan) + statistik tahlil. Excel (.xlsx — grafiklar va qarzlar varag'i bilan) / CSV.
 - Sozlamalar: hisobot vaqti, vaqt zonasi, ma'lumotlarni butunlay o'chirish.
 
 **Superadmin panel** (`/admin` — faqat `SUPERADMIN_IDS`)
@@ -186,5 +198,4 @@ ovoz o'chadi, tahlil statistik (rule-based) bo'ladi.
 ## 8. Ma'lum cheklovlar / keyingi bosqich
 - Faqat UZS. Bot matnlari o'zbekcha (ruscha — `bot/texts/` ga fayl qo'shish).
 - To'lov qo'lda tasdiqlanadi (Click/Payme API — Phase 2, `services/billing.py` ga adapter).
-- Phase 2: chek OCR, budjet limitlari, takroriy xarajatlar, qarz moduli.
-# puldaftar-ai
+- Phase 2: chek OCR, budjet limitlari, takroriy xarajatlar.

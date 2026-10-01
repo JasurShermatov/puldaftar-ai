@@ -1,22 +1,41 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import LineChart from "./LineChart";
+import Chat from "./Chat";
+import { DebtRow, DebtSheet, DebtsTab } from "./Debts";
+import LineChart, { Series } from "./LineChart";
 import { AddSheet, TxEditSheet, TxList } from "./Transactions";
 import { Card, Empty, SafeRich, Segmented, Skeleton, Toast } from "./ui";
-import { api, ApiError, CatTotal, Category, Dashboard, Me, Totals, Tx, TxList as TxListT } from "@/lib/api";
+import { api, ApiError, Category, CatTotal, Dashboard, Debt, Me, SeriesPoint, Totals, Tx, TxList as TxListT } from "@/lib/api";
 import { dateOf, dayLabel, MONTHS_FULL, money, monthLabel, num, pad, parseDay, short, weekLabel } from "@/lib/format";
 import { confirmDialog, downloadFile, haptic, tg } from "@/lib/tg";
 
-type Tab = "home" | "history" | "ai" | "profile";
+type Tab = "home" | "history" | "debts" | "ai" | "profile";
 type Period = "day" | "week" | "month" | "year";
+type Flow = "expense" | "income" | "both";
 const PERIODS: Array<[Period, string]> = [["day", "Kun"], ["week", "Hafta"], ["month", "Oy"], ["year", "Yil"]];
+const TABS: Array<[Tab, string, string]> = [
+  ["home", "🏠", "Asosiy"],
+  ["history", "📋", "Tarix"],
+  ["debts", "🤝", "Qarzlar"],
+  ["ai", "💬", "AI"],
+  ["profile", "⚙️", "Profil"],
+];
+const EXP_COLOR = "var(--expense)";
+const INC_COLOR = "var(--income)";
+
+function initialTab(): Tab {
+  if (typeof window === "undefined") return "home";
+  const t = new URLSearchParams(window.location.search).get("tab");
+  return (TABS.some(([k]) => k === t) ? t : "home") as Tab;
+}
 
 export default function UserApp({ me, reloadMe }: { me: Me; reloadMe: () => void }) {
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [cats, setCats] = useState<Category[]>([]);
   const [edit, setEdit] = useState<Tx | null>(null);
+  const [debtOpen, setDebtOpen] = useState<Debt | null>(null);
   const [adding, setAdding] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
@@ -40,6 +59,7 @@ export default function UserApp({ me, reloadMe }: { me: Me; reloadMe: () => void
     flash(m);
     setVersion((v) => v + 1);
   };
+  const canAdd = me.access.state !== "expired";
 
   return (
     <div className="app">
@@ -50,26 +70,22 @@ export default function UserApp({ me, reloadMe }: { me: Me; reloadMe: () => void
         </div>
       )}
 
-      <main className="content">
-        {tab === "home" && <Home dash={dash} onOpen={setEdit} />}
+      <main className={`content ${tab === "ai" ? "content-chat" : ""}`}>
+        {tab === "home" && <Home dash={dash} onOpen={setEdit} onOpenDebt={setDebtOpen} goDebts={() => setTab("debts")} />}
         {tab === "history" && <History today={dash?.today} onOpen={setEdit} version={version} />}
-        {tab === "ai" && <Insights me={me} />}
+        {tab === "debts" && <DebtsTab version={version} onChanged={changed} canAdd={canAdd} />}
+        {tab === "ai" && <AiTab me={me} />}
         {tab === "profile" && <Profile me={me} reloadMe={reloadMe} flash={flash} />}
       </main>
 
-      {me.access.state !== "expired" && (tab === "home" || tab === "history") && (
+      {canAdd && (tab === "home" || tab === "history") && (
         <button className="fab" onClick={() => { haptic(); setAdding(true); }} aria-label="Yangi yozuv">
           +
         </button>
       )}
 
       <nav className="tabbar">
-        {([
-          ["home", "🏠", "Asosiy"],
-          ["history", "📋", "Tarix"],
-          ["ai", "🧠", "Tahlil"],
-          ["profile", "⚙️", "Profil"],
-        ] as Array<[Tab, string, string]>).map(([k, i, l]) => (
+        {TABS.map(([k, i, l]) => (
           <button key={k} className={tab === k ? "on" : ""} onClick={() => { haptic("select"); setTab(k); }}>
             <span className="ti">{i}</span>
             <span className="tl">{l}</span>
@@ -78,6 +94,7 @@ export default function UserApp({ me, reloadMe }: { me: Me; reloadMe: () => void
       </nav>
 
       <TxEditSheet tx={edit} categories={cats} onClose={() => setEdit(null)} onChanged={changed} />
+      <DebtSheet debt={debtOpen} onClose={() => setDebtOpen(null)} onChanged={(m) => { setDebtOpen(null); changed(m); }} />
       <AddSheet open={adding} onClose={() => setAdding(false)} categories={cats} onDone={changed} />
       <Toast text={toast} />
     </div>
@@ -109,72 +126,140 @@ function Header({ me }: { me: Me }) {
 
 // ======================= ASOSIY =======================
 
-function Home({ dash, onOpen }: { dash: Dashboard | null; onOpen: (t: Tx) => void }) {
+function Home({ dash, onOpen, onOpenDebt, goDebts }: { dash: Dashboard | null; onOpen: (t: Tx) => void; onOpenDebt: (d: Debt) => void; goDebts: () => void }) {
   const [catPeriod, setCatPeriod] = useState<Period>("month");
+  const [catFlow, setCatFlow] = useState<"expense" | "income">("expense");
+  const [flow, setFlow] = useState<Flow>("both");
   if (!dash) {
     return (
       <>
-        <Skeleton h={130} />
-        <Skeleton h={220} />
-        <Skeleton h={220} />
+        <Skeleton h={150} />
+        <Skeleton h={70} />
+        <Skeleton h={240} />
+        <Skeleton h={240} />
       </>
     );
   }
   const t = dash.charts;
-  const catList: Record<Period, CatTotal[]> = { day: dash.categories_day, week: dash.categories_week, month: dash.categories_month, year: dash.categories_year };
-  const catTotals: Record<Period, Totals> = { day: dash.totals_day, week: dash.totals_week, month: dash.totals_month, year: dash.totals_year };
+  const expCats: Record<Period, CatTotal[]> = { day: dash.categories_day, week: dash.categories_week, month: dash.categories_month, year: dash.categories_year };
+  const incCats: Record<Period, CatTotal[]> = { day: dash.income_categories_day, week: dash.income_categories_week, month: dash.income_categories_month, year: dash.income_categories_year };
+  const totals: Record<Period, Totals> = { day: dash.totals_day, week: dash.totals_week, month: dash.totals_month, year: dash.totals_year };
   const td = parseDay(dash.today);
+  const d = dash.totals_day;
+  const m = dash.totals_month;
+  const debts = dash.debts;
 
   return (
     <>
       <section className="hero">
-        <div className="hero-l">Bugungi xarajat · {dateOf(dash.today)}</div>
-        <div className="hero-v">{money(dash.totals_day.expense)}</div>
+        <div className="hero-l">Bugun · {dateOf(dash.today)}</div>
+        <div className="hero-grid">
+          <div>
+            <div className="hero-k">💸 Xarajat</div>
+            <div className="hero-n">{money(d.expense)}</div>
+          </div>
+          <div>
+            <div className="hero-k">💰 Daromad</div>
+            <div className="hero-n inc">{d.income ? `+${money(d.income)}` : "—"}</div>
+          </div>
+        </div>
         <div className="hero-s">
-          {dash.totals_day.count} ta yozuv
-          {dash.totals_day.income > 0 && <> · <span className="inc">+{short(dash.totals_day.income)} daromad</span></>}
+          {d.count} ta yozuv
           {dash.avg_daily_30 > 0 && <> · o'rtacha {short(dash.avg_daily_30)}/kun</>}
+          {d.income > 0 && <> · qoldiq <b>{d.net >= 0 ? "+" : "−"}{short(Math.abs(d.net))}</b></>}
         </div>
       </section>
 
       <div className="kpis">
-        <Kpi label="Hafta" v={dash.totals_week.expense} />
-        <Kpi label={MONTHS_FULL[td.getMonth()]} v={dash.totals_month.expense} />
-        <Kpi label={`${td.getFullYear()} yil`} v={dash.totals_year.expense} />
+        <Kpi label="Hafta" t={dash.totals_week} />
+        <Kpi label={MONTHS_FULL[td.getMonth()]} t={dash.totals_month} />
+        <Kpi label={`${td.getFullYear()} yil`} t={dash.totals_year} />
       </div>
 
-      <ChartCard
-        title="📅 Kunlik xarajat"
-        sub="oxirgi 30 kun"
-        total={sum(t.daily)}
-        points={t.daily.map((p) => ({ label: dayLabel(p.period), full: `${dateOf(p.period)}`, value: p.expense }))}
-      />
-      <ChartCard
-        title="🗓 Haftalik xarajat"
-        sub="oxirgi 12 hafta"
-        total={sum(t.weekly)}
-        points={t.weekly.map((p) => ({ label: weekLabel(p.period).split("–")[0], full: `Hafta: ${weekLabel(p.period)}`, value: p.expense }))}
-      />
-      <ChartCard
-        title="📆 Oylik xarajat"
-        sub="oxirgi 12 oy"
-        total={sum(t.monthly)}
-        points={t.monthly.map((p) => {
-          const d = parseDay(p.period);
-          return { label: monthLabel(p.period), full: `${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}`, value: p.expense };
-        })}
-      />
-      <ChartCard
-        title="📊 Yillik xarajat"
-        sub="yillar kesimida"
-        total={sum(t.yearly)}
-        points={t.yearly.map((p) => ({ label: p.period.slice(0, 4), full: `${p.period.slice(0, 4)} yil`, value: p.expense }))}
-      />
-
-      <Card title="🏷 Nimaga ketyapti" right={null}>
-        <Segmented value={catPeriod} options={PERIODS} onChange={setCatPeriod} />
-        <CategoryBars items={catList[catPeriod]} total={catTotals[catPeriod].expense} />
+      <Card className="netcard">
+        <div className="net-row">
+          <div>
+            <div className="kpi-l">{MONTHS_FULL[td.getMonth()]}: sof natija</div>
+            <div className={`net-v ${m.net >= 0 ? "pos" : "neg"}`}>
+              {m.net >= 0 ? "+" : "−"}{money(Math.abs(m.net))}
+            </div>
+          </div>
+          <div className="net-bar" aria-hidden>
+            <span className="exp" style={{ width: `${pct(m.expense, m.expense + m.income)}%` }} />
+            <span className="inc" style={{ width: `${pct(m.income, m.expense + m.income)}%` }} />
+          </div>
+        </div>
+        <div className="net-legend">
+          <span><i style={{ background: EXP_COLOR }} /> Xarajat {short(m.expense)}</span>
+          <span><i style={{ background: INC_COLOR }} /> Daromad {short(m.income)}</span>
+        </div>
       </Card>
+
+      <div className="row gap wrap between">
+        <h3 className="sec-title">📈 Dinamika</h3>
+        <Segmented value={flow} options={[["both", "Ikkalasi"], ["expense", "Xarajat"], ["income", "Daromad"]]} onChange={setFlow} />
+      </div>
+      <div className="charts">
+        <ChartCard title="📅 Kunlik" sub="oxirgi 30 kun" flow={flow} points={t.daily} labelOf={(p) => ({ label: dayLabel(p.period), full: dateOf(p.period) })} />
+        <ChartCard title="🗓 Haftalik" sub="oxirgi 12 hafta" flow={flow} points={t.weekly} labelOf={(p) => ({ label: weekLabel(p.period).split("–")[0], full: `Hafta: ${weekLabel(p.period)}` })} />
+        <ChartCard
+          title="📆 Oylik"
+          sub="oxirgi 12 oy"
+          flow={flow}
+          points={t.monthly}
+          labelOf={(p) => {
+            const x = parseDay(p.period);
+            return { label: monthLabel(p.period), full: `${MONTHS_FULL[x.getMonth()]} ${x.getFullYear()}` };
+          }}
+        />
+        <ChartCard title="📊 Yillik" sub="yillar kesimida" flow={flow} points={t.yearly} labelOf={(p) => ({ label: p.period.slice(0, 4), full: `${p.period.slice(0, 4)} yil` })} />
+      </div>
+
+      <Card
+        title={catFlow === "expense" ? "🏷 Nimaga ketyapti" : "🏷 Nimadan kelyapti"}
+        right={
+          <div className="seg mini">
+            <button className={catFlow === "expense" ? "on" : ""} onClick={() => { haptic("select"); setCatFlow("expense"); }}>Xarajat</button>
+            <button className={catFlow === "income" ? "on" : ""} onClick={() => { haptic("select"); setCatFlow("income"); }}>Daromad</button>
+          </div>
+        }
+      >
+        <Segmented value={catPeriod} options={PERIODS} onChange={setCatPeriod} />
+        <CategoryBars
+          items={catFlow === "expense" ? expCats[catPeriod] : incCats[catPeriod]}
+          total={catFlow === "expense" ? totals[catPeriod].expense : totals[catPeriod].income}
+          color={catFlow === "expense" ? EXP_COLOR : INC_COLOR}
+          emptyText={catFlow === "expense" ? "Bu davrda xarajat yo'q" : "Bu davrda daromad yo'q"}
+        />
+      </Card>
+
+      {(debts.open_count > 0 || debts.items.length > 0) && (
+        <Card
+          title="🤝 Qarzlar"
+          right={
+            <button className="btn small" onClick={goDebts}>
+              Hammasi ›
+            </button>
+          }
+        >
+          <div className="kpis two">
+            <div className="kpi">
+              <div className="kpi-l">➡️ Sizga qaytarishadi</div>
+              <div className="kpi-v inc">{short(debts.given_open)}</div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-l">⬅️ Siz qaytarasiz</div>
+              <div className="kpi-v exp">{short(debts.taken_open)}</div>
+            </div>
+          </div>
+          {debts.overdue_count > 0 && <p className="hint err">⚠️ {debts.overdue_count} ta qarz muddati o'tgan</p>}
+          <div className="debts mt">
+            {debts.items.slice(0, 4).map((x) => (
+              <DebtRow key={x.id} d={x} onOpen={onOpenDebt} />
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card title="🕐 Oxirgi yozuvlar">
         <TxList items={dash.recent.slice(0, 8)} today={dash.today} onOpen={onOpen} />
@@ -183,22 +268,31 @@ function Home({ dash, onOpen }: { dash: Dashboard | null; onOpen: (t: Tx) => voi
   );
 }
 
-function sum(a: { expense: number }[]) {
-  return a.reduce((s, p) => s + p.expense, 0);
+function pct(a: number, total: number) {
+  return total ? Math.max(0, Math.min(100, Math.round((100 * a) / total))) : 0;
 }
 
-function Kpi({ label, v }: { label: string; v: number }) {
+function Kpi({ label, t }: { label: string; t: Totals }) {
   return (
     <div className="kpi">
       <div className="kpi-l">{label}</div>
-      <div className="kpi-v">{short(v)}</div>
+      <div className="kpi-v">{short(t.expense)}</div>
+      <div className={`kpi-s ${t.income ? "inc" : "muted"}`}>{t.income ? `+${short(t.income)}` : "daromad yo'q"}</div>
     </div>
   );
 }
 
-function ChartCard({ title, sub, total, points }: { title: string; sub: string; total: number; points: { label: string; full: string; value: number }[] }) {
-  const nonzero = points.filter((p) => p.value > 0).length;
-  const avg = nonzero ? total / points.length : 0;
+function ChartCard({ title, sub, points, flow, labelOf }: { title: string; sub: string; points: SeriesPoint[]; flow: Flow; labelOf: (p: SeriesPoint) => { label: string; full: string } }) {
+  const labels = useMemo(() => points.map(labelOf), [points, labelOf]);
+  const series = useMemo(() => {
+    const out: Series[] = [];
+    if (flow !== "income") out.push({ key: "e", label: "Xarajat", color: EXP_COLOR, values: points.map((p) => p.expense) });
+    if (flow !== "expense") out.push({ key: "i", label: "Daromad", color: INC_COLOR, values: points.map((p) => p.income) });
+    return out;
+  }, [points, flow]);
+  const exp = points.reduce((s, p) => s + p.expense, 0);
+  const inc = points.reduce((s, p) => s + p.income, 0);
+  const n = Math.max(1, points.length);
   return (
     <Card
       title={
@@ -208,23 +302,29 @@ function ChartCard({ title, sub, total, points }: { title: string; sub: string; 
       }
     >
       <div className="chart-meta">
-        <span>
-          Jami: <b>{money(total)}</b>
-        </span>
-        <span className="muted">o'rtacha {short(avg)}</span>
+        {flow !== "income" && (
+          <span className="legend">
+            <i style={{ background: EXP_COLOR }} /> Xarajat <b>{short(exp)}</b> <span className="muted">· o'rt. {short(exp / n)}</span>
+          </span>
+        )}
+        {flow !== "expense" && (
+          <span className="legend">
+            <i style={{ background: INC_COLOR }} /> Daromad <b>{short(inc)}</b> <span className="muted">· o'rt. {short(inc / n)}</span>
+          </span>
+        )}
       </div>
-      <LineChart points={points} />
+      <LineChart labels={labels} series={series} />
     </Card>
   );
 }
 
-function CategoryBars({ items, total }: { items: CatTotal[]; total: number }) {
-  if (!items.length) return <Empty icon="🫙" text="Bu davrda xarajat yo'q" />;
+function CategoryBars({ items, total, color, emptyText }: { items: CatTotal[]; total: number; color: string; emptyText: string }) {
+  if (!items.length) return <Empty icon="🫙" text={emptyText} />;
   const max = items[0]?.total || 1;
   return (
     <div className="bars">
       {items.slice(0, 10).map((c, i) => {
-        const pct = total ? Math.round((100 * c.total) / total) : 0;
+        const p = total ? Math.round((100 * c.total) / total) : 0;
         return (
           <div key={`${c.id}-${i}`} className="bar-row">
             <div className="bar-top">
@@ -232,11 +332,11 @@ function CategoryBars({ items, total }: { items: CatTotal[]; total: number }) {
                 {c.emoji} {c.name || "Boshqa"} <span className="muted small">· {c.count} ta</span>
               </span>
               <span>
-                <b>{num(c.total)}</b> <span className="muted small">{pct}%</span>
+                <b>{num(c.total)}</b> <span className="muted small">{p}%</span>
               </span>
             </div>
             <div className="bar-track">
-              <div className="bar-fill" style={{ width: `${Math.max(3, (100 * c.total) / max)}%` }} />
+              <div className="bar-fill" style={{ width: `${Math.max(3, (100 * c.total) / max)}%`, background: color }} />
             </div>
           </div>
         );
@@ -297,17 +397,17 @@ function History({ today, onOpen, version }: { today?: string; onOpen: (t: Tx) =
       {data ? (
         <>
           <div className="kpis">
-            <div className="kpi">
+            <button className={`kpi tap ${type === "expense" ? "sel" : ""}`} onClick={() => setType(type === "expense" ? "all" : "expense")}>
               <div className="kpi-l">Xarajat</div>
               <div className="kpi-v exp">{short(data.totals.expense)}</div>
-            </div>
-            <div className="kpi">
+            </button>
+            <button className={`kpi tap ${type === "income" ? "sel" : ""}`} onClick={() => setType(type === "income" ? "all" : "income")}>
               <div className="kpi-l">Daromad</div>
               <div className="kpi-v inc">{short(data.totals.income)}</div>
-            </div>
+            </button>
             <div className="kpi">
               <div className="kpi-l">Qoldiq</div>
-              <div className="kpi-v">{data.totals.net >= 0 ? "+" : "−"}{short(Math.abs(data.totals.net))}</div>
+              <div className={`kpi-v ${data.totals.net >= 0 ? "inc" : "exp"}`}>{data.totals.net >= 0 ? "+" : "−"}{short(Math.abs(data.totals.net))}</div>
             </div>
           </div>
           <Segmented value={type} options={[["all", "Hammasi"], ["expense", "Xarajat"], ["income", "Daromad"]]} onChange={setType} />
@@ -322,7 +422,17 @@ function History({ today, onOpen, version }: { today?: string; onOpen: (t: Tx) =
   );
 }
 
-// ======================= AI TAHLIL =======================
+// ======================= AI =======================
+
+function AiTab({ me }: { me: Me }) {
+  const [mode, setMode] = useState<"chat" | "insight">("chat");
+  return (
+    <>
+      <Segmented value={mode} options={[["chat", "💬 Suhbat"], ["insight", "📊 Tahlil"]]} onChange={setMode} />
+      {mode === "chat" ? <Chat canAsk={me.access.state !== "expired"} /> : <Insights me={me} />}
+    </>
+  );
+}
 
 type InsightResp = {
   text: string;
@@ -331,6 +441,7 @@ type InsightResp = {
     avg_day_28: number;
     last7_expense: number;
     prev7_expense: number;
+    last7_income: number;
     change_7_pct: number | null;
     top_weekday: string | null;
     categories_28: Array<{ name: string; total: number; avg_week: number; share_pct: number; count: number }>;
@@ -526,6 +637,7 @@ function Profile({ me, reloadMe, flash }: { me: Me; reloadMe: () => void; flash:
             💬 Chatga yuborish
           </button>
         </div>
+        <p className="hint">Excel faylda: xulosa, tranzaksiyalar, kategoriyalar, dinamika va qarzlar varaqlari.</p>
       </Card>
 
       <Card title="🕛 Kunlik hisobot">
@@ -560,13 +672,13 @@ function Profile({ me, reloadMe, flash }: { me: Me; reloadMe: () => void; flash:
       <Card title="🔒 Maxfiylik">
         <p className="hint">
           Ma'lumotlaringiz faqat sizga ko'rinadi: har bir so'rov Telegram imzosi bilan tekshiriladi, bazada qator darajasida
-          izolyatsiya (RLS) va izohlar AES-256 bilan shifrlangan. Ovozli xabarlar saqlanmaydi.
+          izolyatsiya (RLS), izohlar, qarz ismlari va AI suhbat AES-256 bilan shifrlangan. Ovozli xabarlar saqlanmaydi.
         </p>
         <button className="btn danger full" onClick={deleteAll}>
           🗑 Barcha ma'lumotlarimni o'chirish
         </button>
       </Card>
-      <p className="center muted small">Hisobchi AI · v1.0</p>
+      <p className="center muted small">Hisobchi AI · v1.1</p>
     </>
   );
 }

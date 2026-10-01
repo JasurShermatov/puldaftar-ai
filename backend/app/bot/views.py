@@ -48,16 +48,45 @@ async def saved_message(user: User, rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def pending_message(items: list[dict], question: str | None) -> str:
+def pending_message(items: list[dict], question: str | None, debts: list[dict] | None = None,
+                    tz_name: str = "Asia/Tashkent") -> str:
     lines = [T.CONFIRM_HEADER]
     for it in items:
-        sign = "➕ Daromad: " if it["type"] == "income" else ""
+        sign = "➕ Daromad: " if it["type"] == "income" else "💸 "
         desc = f" · <i>{e(it.get('description'))}</i>" if it.get("description") else ""
         lines.append(f"{sign}{it.get('category_emoji', '•')} <b>{e(it.get('category_name'))}</b> — "
                      f"{fmt_money(it['amount'])}{desc}")
+    for d in debts or []:
+        who = e(d.get("counterparty")) or "?"
+        verb = f"<b>{who}</b>ga qarz berdingiz" if d["direction"] == "given" else f"<b>{who}</b>dan qarz oldingiz"
+        due = ""
+        if d.get("due_at"):
+            dd = d["due_at"]
+            if isinstance(dd, str):
+                dd = datetime.fromisoformat(dd)
+            due = f" · 📅 {dd.astimezone(tz(tz_name)).strftime('%d.%m')}gacha"
+        lines.append(f"🤝 {verb} — {fmt_money(d['amount'])}{due}")
     if question:
         lines += ["", f"❔ {e(question)}"]
     return "\n".join(lines)
+
+
+def debt_saved_message(rows: list[dict], tz_name: str) -> str:
+    from app.services import debts as debt_svc
+
+    if len(rows) == 1:
+        return debt_svc.saved_text(rows[0], tz_name)
+    lines = ["🤝 <b>Qarzlar yozildi</b>"]
+    for n, r in enumerate(rows, 1):
+        lines.append(f"{n}. " + debt_svc.line(r, tz_name))
+    return "\n".join(lines)
+
+
+def repaid_message(rows: list[dict], status: str, tz_name: str) -> str:
+    from app.services import debts as debt_svc
+
+    head = "✅ <b>Qarz yopildi</b>" if status == "paid" else "✅ <b>Qisman qaytarildi</b>"
+    return head + "\n" + "\n".join(debt_svc.line(r, tz_name) for r in rows)
 
 
 def plan_text(user: User) -> str:

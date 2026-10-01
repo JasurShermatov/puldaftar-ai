@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, Category, IngestResult, Tx } from "@/lib/api";
 import { money, num, relDay, timeOf } from "@/lib/format";
 import { confirmDialog, haptic } from "@/lib/tg";
+import { DebtForm } from "./Debts";
 import { Empty, Sheet } from "./ui";
 
 /** Kunlar bo'yicha guruhlangan ro'yxat */
@@ -24,11 +25,16 @@ export function TxList({ items, today, onOpen }: { items: Tx[]; today: string; o
     <div className="txlist">
       {groups.map(([day, list]) => {
         const exp = list.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+        const inc = list.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
         return (
           <div key={day} className="txgroup">
             <div className="txgroup-h">
               <span>{relDay(day, today)}</span>
-              <span className="muted">−{num(exp)}</span>
+              <span>
+                {inc > 0 && <span className="inc">+{num(inc)}</span>}
+                {inc > 0 && exp > 0 && <span className="muted"> · </span>}
+                {exp > 0 && <span className="muted">−{num(exp)}</span>}
+              </span>
             </div>
             {list.map((t) => (
               <button key={t.id} className="tx" onClick={() => onOpen(t)}>
@@ -134,7 +140,7 @@ export function TxEditSheet({ tx, categories, onClose, onChanged }: { tx: Tx | n
 }
 
 export function AddSheet({ open, onClose, categories, onDone }: { open: boolean; onClose: () => void; categories: Category[]; onDone: (msg: string) => void }) {
-  const [mode, setMode] = useState<"text" | "manual">("text");
+  const [mode, setMode] = useState<"text" | "manual" | "debt">("text");
   const [text, setText] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState<"expense" | "income">("expense");
@@ -161,7 +167,11 @@ export function AddSheet({ open, onClose, categories, onDone }: { open: boolean;
       setResult(r);
       if (r.kind === "saved" && !r.pending_id) {
         haptic("success");
-        onDone(`✅ ${r.saved.length} ta yozuv saqlandi`);
+        const parts: string[] = [];
+        if (r.saved.length) parts.push(`${r.saved.length} ta yozuv`);
+        if (r.saved_debts.length) parts.push(`${r.saved_debts.length} ta qarz`);
+        if (r.repaid.length) parts.push(r.repay_status === "partial" ? "qarz qisman qaytarildi" : "qarz yopildi");
+        onDone(`✅ ${parts.join(", ") || "Saqlandi"}`);
         onClose();
       }
     } catch (e) {
@@ -172,13 +182,13 @@ export function AddSheet({ open, onClose, categories, onDone }: { open: boolean;
     }
   }
 
-  async function confirm(ok: boolean) {
+  async function confirm(choice: "ok" | "debt" | "no") {
     if (!result?.pending_id) return;
     setBusy(true);
     try {
-      if (ok) await api.post(`/api/pending/${result.pending_id}/confirm`);
-      else await api.del(`/api/pending/${result.pending_id}`);
-      onDone(ok ? "✅ Saqlandi" : "Bekor qilindi");
+      if (choice === "no") await api.del(`/api/pending/${result.pending_id}`);
+      else await api.post(`/api/pending/${result.pending_id}/confirm?choice=${choice}`);
+      onDone(choice === "no" ? "Bekor qilindi" : choice === "debt" ? "🤝 Qarz yozildi" : "✅ Saqlandi");
       onClose();
     } finally {
       setBusy(false);
@@ -219,18 +229,23 @@ export function AddSheet({ open, onClose, categories, onDone }: { open: boolean;
     <Sheet open={open} onClose={onClose} title="Yangi yozuv">
       <div className="seg mb">
         <button className={mode === "text" ? "on" : ""} onClick={() => setMode("text")}>
-          ✍️ Oddiy matn
+          ✍️ Matn
         </button>
         <button className={mode === "manual" ? "on" : ""} onClick={() => setMode("manual")}>
           🧾 Qo'lda
         </button>
+        <button className={mode === "debt" ? "on" : ""} onClick={() => setMode("debt")}>
+          🤝 Qarz
+        </button>
       </div>
 
-      {mode === "text" ? (
+      {mode === "debt" ? (
+        <DebtForm active={open && mode === "debt"} onDone={(m) => { onDone(m); onClose(); }} />
+      ) : mode === "text" ? (
         <>
           <textarea
             className="inp area"
-            placeholder="Masalan: taksiga 35 ming, obedga 80 ming ketdi"
+            placeholder="Masalan: taksiga 35 ming, obedga 80 ming ketdi · Jasurga 100 ming qarz berdim 2 kunga"
             value={text}
             maxLength={1000}
             onChange={(e) => setText(e.target.value)}
@@ -247,15 +262,28 @@ export function AddSheet({ open, onClose, categories, onDone }: { open: boolean;
                   </p>
                   {result.pending_items.map((p, i) => (
                     <p key={i}>
+                      {p.type === "income" ? "➕ " : "💸 "}
                       {p.category_emoji} {p.category_name} — {money(p.amount)} {p.description ? `· ${p.description}` : ""}
                     </p>
                   ))}
+                  {result.pending_debts.map((d, i) => (
+                    <p key={`d${i}`}>
+                      🤝 {d.counterparty || "?"}
+                      {d.direction === "given" ? "ga qarz berdingiz" : "dan qarz oldingiz"} — {money(d.amount)}
+                      {d.due_at ? ` · ${d.due_at.slice(8, 10)}.${d.due_at.slice(5, 7)}gacha` : ""}
+                    </p>
+                  ))}
                   {result.question && <p className="muted">❔ {result.question}</p>}
+                  {result.has_alt_debt && (
+                    <button className="btn full mt" onClick={() => confirm("debt")} disabled={busy}>
+                      🤝 Bu qarz edi
+                    </button>
+                  )}
                   <div className="row gap mt">
-                    <button className="btn" onClick={() => confirm(false)} disabled={busy}>
+                    <button className="btn" onClick={() => confirm("no")} disabled={busy}>
                       Bekor
                     </button>
-                    <button className="btn primary grow" onClick={() => confirm(true)} disabled={busy}>
+                    <button className="btn primary grow" onClick={() => confirm("ok")} disabled={busy}>
                       ✅ Tasdiqlash
                     </button>
                   </div>

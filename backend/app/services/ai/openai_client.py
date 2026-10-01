@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -55,6 +56,16 @@ async def chat_json(*, model: str, system: str, user: str, schema: dict[str, Any
     return json.loads(content)
 
 
+async def chat_messages(*, model: str, messages: list[dict], temperature: float = 0.3, max_tokens: int = 700) -> str:
+    """Ko'p qadamli suhbat (AI chat). messages: [{"role","content"}, ...]."""
+    t0 = time.perf_counter()
+    resp = await client().chat.completions.create(
+        model=model, temperature=temperature, max_tokens=max_tokens, messages=messages,
+    )
+    log.info("llm chat ok %.0fms", (time.perf_counter() - t0) * 1000)
+    return (resp.choices[0].message.content or "").strip()
+
+
 async def chat_text(*, model: str, system: str, user: str, temperature: float = 0.4, max_tokens: int = 600) -> str:
     resp = await client().chat.completions.create(
         model=model,
@@ -67,12 +78,32 @@ async def chat_text(*, model: str, system: str, user: str, temperature: float = 
 
 STT_PROMPT = (
     "Kundalik moliyaviy nutq: o'zbekcha (lotin), ruscha va inglizcha so'zlar aralash bo'lishi mumkin. "
-    "Uzbek, Russian and English mixed speech about daily expenses and income. "
+    "Uzbek, Russian and English mixed speech about daily expenses, income and debts. "
     "Summalar: ming, million, mln, yarim, so'm, тысяч, миллион, сум, thousand, k. "
     "Misollar: Bugun taksiga 35 ming, obedga 80 ming ketdi. Segodnya reklama uchun 800 ming rasxod. "
     "Kecha benzin 300 ming. Oylik 6 million tushdi. Кофе 25 тысяч. Lunch 60 ming, taxi 40k. "
-    "Dostavka, Korzinka, Evos, Yandex Go, Click, Payme."
+    "Jasurga 100 ming qarz berdim 2 kunga. Akmaldan 500 ming qarz oldim bir haftaga. Jasur qarzini qaytardi. "
+    "100 ming topib oldim. 50 ming yo'qotib qo'ydim. "
+    "Dostavka, Korzinka, Evos, Yandex Go, Click, Payme, Uzum, Humo, Uzcard."
 )
+
+# Ovozdan tanishda tez-tez uchraydigan xatolar (faqat xavfsiz, aniq almashtirishlar)
+_STT_FIXES = [
+    (re.compile(r"(\d)\s*(min|mink|mig|mimg|ming'|minq)\b", re.I), r"\1 ming"),
+    (re.compile(r"\b(ming|mln|million)\s*(so'm|sum|som|сум|сўм|sо'm)\b", re.I), r"\1 so'm"),
+    (re.compile(r"\b(yarım|yarim|yarm|yarem)\b", re.I), "yarim"),
+    (re.compile(r"\bmilyon\b|\bmillon\b|\bмиллён\b", re.I), "million"),
+    (re.compile(r"\b(qars|qarzz|karz|qarsz)\b", re.I), "qarz"),
+    (re.compile(r"\s{2,}"), " "),
+]
+
+
+def fix_transcript(text: str) -> str:
+    """STT matnidagi tipik xatolarni tuzatadi (ma'noni o'zgartirmaydi)."""
+    t = text.strip()
+    for rx, rep in _STT_FIXES:
+        t = rx.sub(rep, t)
+    return t.strip()
 
 
 def describe_error(e: Exception) -> str:
@@ -103,7 +134,7 @@ async def transcribe(audio: bytes, filename: str = "voice.ogg") -> str:
             text = await _transcribe_once(model, audio, filename)
             log.info("stt ok model=%s %.0fms len=%d", model, (time.perf_counter() - t0) * 1000, len(text))
             if text:
-                return text
+                return fix_transcript(text)
         except Exception as e:  # noqa: BLE001
             last = e
             log.warning("stt failed model=%s: %s", model, describe_error(e))

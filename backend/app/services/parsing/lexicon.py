@@ -42,6 +42,10 @@ EXPENSE_KEYWORDS: dict[str, list[str]] = {
     "construction": ["qurilish", "sement", "g'isht", "gisht", "armatura", "beton", "qum", "shebyon",
                      "kafel", "kraska", "bo'yoq", "stroy", "usta"],
     "taxes": ["soliq", "jarima", "shtraf", "nalog", "bojxona", "poshlina", "yo'l politsiya", "gai"],
+    "loss": ["yo'qotib", "yoqotib", "yo'qotdim", "yoqotdim", "yo'qoldi", "yoqoldi", "tushirib qoldirdim", "tushurib qoldirdim",
+             "o'g'irlatdim", "ogirlatdim", "o'g'irlab", "ogirlab", "o'g'irlashdi", "ogirlashdi", "aldanib", "aldab ketishdi",
+             "poteryal", "poteryala", "ukrali", "sperli", "lost", "stolen", "zarar", "ubitok", "kuyib qoldim", "kuydim",
+             "yutqazdim", "yutqizdim", "proigral"],
 }
 
 INCOME_KEYWORDS: dict[str, list[str]] = {
@@ -51,15 +55,20 @@ INCOME_KEYWORDS: dict[str, list[str]] = {
     "bonus": ["bonus", "premiya", "mukofot"],
     "refund": ["qaytardi", "qaytarildi", "qaytib keldi", "vozvrat", "keshbek", "cashback"],
     "rent_income": ["ijara daromad", "ijarachi", "ijaradan"],
+    "found": ["topib oldim", "topdim", "topib", "topvoldim", "nashel", "nashla", "found", "yutib oldim", "yutdim",
+              "yutuq", "viigral", "vyigral", "sovg'a qilishdi", "sovga qilishdi", "hadya qilishdi", "podarili"],
     "other_income": ["income", "daromad", "doxod", "daxod", "dohod", "prixod", "foyda"],
 }
 
 # Daromad signal so'zlari (fe'llar) — kategoriya aniq bo'lmasa ham tur = income
-INCOME_VERBS = ["received", "got paid", "earned", "income", "keldi", "tushdi", "oldim pul", "ishladim", "topdim", "daromad", "doxod", "daxod", "dohod",
-                "prixod", "poluchil", "zarabotal", "prishlo", "prishli", "kelib tushdi", "tushib"]
+INCOME_VERBS = ["received", "got paid", "earned", "income", "found", "won", "keldi", "tushdi", "oldim pul", "ishladim", "topdim",
+                "topib oldim", "topvoldim", "yutib oldim", "yutdim", "berishdi", "sovg'a qilishdi", "daromad", "doxod", "daxod",
+                "dohod", "prixod", "poluchil", "zarabotal", "nashel", "nashla", "vyigral", "viigral", "podarili", "prishlo",
+                "prishli", "kelib tushdi", "tushib"]
 # Xarajat signal so'zlari
-EXPENSE_VERBS = ["spent", "paid", "bought", "ketdi", "sarfladim", "sarf", "to'ladim", "toladim", "berdim", "oldim", "xarajat", "rasxod",
-                 "potratil", "zaplatil", "kupil", "ushlo", "sotib oldim", "yedim", "ichdim", "to'lov", "tolov"]
+EXPENSE_VERBS = ["spent", "paid", "bought", "lost", "ketdi", "sarfladim", "sarf", "to'ladim", "toladim", "berdim", "oldim", "xarajat",
+                 "rasxod", "yo'qotdim", "yoqotdim", "yo'qotib", "yoqotib", "potratil", "zaplatil", "kupil", "poteryal", "ushlo",
+                 "sotib oldim", "yedim", "ichdim", "to'lov", "tolov"]
 
 # Tavsifdan olib tashlanadigan so'zlar
 STOPWORDS = {
@@ -79,3 +88,48 @@ YESTERDAY = {"kecha", "vchera", "kechagi", "yesterday"}
 DAY_BEFORE = {"o'tgan kuni", "otgan kuni", "pozavchera", "avvalgi kuni", "oldingi kuni"}
 TODAY = {"bugun", "segodnya", "hozir", "today"}
 TOMORROW = {"ertaga", "zavtra"}
+
+# ---------------- Qarz ----------------
+# "qarz berdim" → men berdim (given), "qarz oldim" → men oldim (taken)
+DEBT_WORDS = ["qarz", "qarzga", "qarzini", "qarzimni", "qarzni", "nasiya", "nasiyaga", "dolg", "v dolg", "zaym", "zayom",
+              "zanyal", "odolzhil", "odoljil", "zanyala", "odolzhila", "loan", "lent", "borrowed", "lend", "borrow", "owe"]
+DEBT_GIVEN_VERBS = ["berdim", "berib turdim", "berdik", "berib yubordim", "dal", "dala", "odolzhil", "odoljil", "odolzhila",
+                    "lent", "lend", "gave"]
+DEBT_TAKEN_VERBS = ["oldim", "olib turdim", "oldik", "olib keldim", "vzyal", "vzyala", "zanyal", "zanyala", "borrowed",
+                    "borrow", "took", "nasiyaga oldim"]
+# qaytarish: "qarzini qaytardi" (menga), "qarzimni qaytardim" (men)
+REPAY_TO_ME = ["qarzini qaytardi", "qarzni qaytardi", "qaytarib berdi", "qarzini berdi", "qarzini to'ladi", "qarzini toladi",
+               "qarzini yopdi", "qarzini uzdi", "vernul mne", "vernula mne", "otdal mne", "otdala mne", "vernul dolg",
+               "vernula dolg", "paid me back", "returned my money", "returned the debt"]
+REPAY_BY_ME = ["qarzimni qaytardim", "qarzni qaytardim", "qaytarib berdim", "qarzimni berdim", "qarzimni to'ladim",
+               "qarzimni toladim", "qarzni to'ladim", "qarzni toladim", "qarzni yopdim", "qarzimni yopdim", "qarzimni uzdim",
+               "ya vernul", "ya otdal", "vernul emu", "vernul ey", "otdal emu", "otdal ey", "vernul dolg emu",
+               "paid back my debt", "repaid", "i paid back"]
+
+# Muddat: "2 kunga", "1 haftaga", "oy oxirigacha", "ertagacha", "15-oktabrgacha"
+DURATION_UNITS = {
+    "kun": 1, "kunga": 1, "kunlik": 1, "kunda": 1, "den": 1, "dnya": 1, "dney": 1, "day": 1, "days": 1,
+    "hafta": 7, "haftaga": 7, "haftalik": 7, "haftada": 7, "nedelya": 7, "nedelyu": 7, "nedeli": 7, "nedel": 7,
+    "week": 7, "weeks": 7,
+    "oy": 30, "oyga": 30, "oylik": 30, "oyda": 30, "mesyats": 30, "mesyatsa": 30, "mesyatsev": 30, "month": 30, "months": 30,
+}
+UNTIL_WORDS = {"ertagacha": 1, "zavtra": 1, "do zavtra": 1, "tomorrow": 1, "indinga": 2, "indingacha": 2, "poslezavtra": 2}
+WEEKDAY_WORDS = {
+    "dushanba": 0, "seshanba": 1, "chorshanba": 2, "payshanba": 3, "juma": 4, "shanba": 5, "yakshanba": 6,
+    "ponedelnik": 0, "vtornik": 1, "sreda": 2, "sredu": 2, "chetverg": 3, "pyatnitsa": 4, "pyatnitsu": 4, "subbota": 5,
+    "subbotu": 5, "voskresenye": 6, "ponedelnika": 0, "vtornika": 1, "sredi": 2, "sredy": 2, "chetverga": 3,
+    "pyatnitsi": 4, "pyatnitsy": 4, "subboti": 5, "subboty": 5, "voskresenya": 6, "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4,
+    "saturday": 5, "sunday": 6,
+}
+# Ism bo'lishi mumkin bo'lmagan so'zlar (-ga/-dan qo'shimchali bo'lsa ham)
+NOT_A_NAME = {
+    "bugun", "kecha", "ertaga", "indin", "men", "sen", "u", "biz", "siz", "ular", "unga", "menga", "senga", "bizga",
+    "sizga", "ularga", "undan", "mendan", "sendan", "bizdan", "sizdan", "ulardan", "kun", "hafta", "oy", "yil", "soat",
+    "qarz", "qarzga", "nasiya", "nasiyaga", "pul", "pulga", "puldan", "karta", "kartaga", "kartadan", "naqd", "naqdga",
+    "bank", "bankdan", "bankka", "ishga", "ishdan", "uyga", "uydan", "bozor", "bozorga", "bozordan", "do'kon", "dokon",
+    "do'konga", "dokonga", "do'kondan", "dokondan", "muddat", "muddatga", "oldin", "keyin", "yana", "ham",
+    "dolg", "dengi", "mne", "emu", "ey", "nam", "im", "tebe", "vam", "ot", "do", "na", "za", "to", "from", "for",
+    "the", "a", "my", "me", "him", "her", "them", "friend", "bittasiga", "bittasidan", "birovga", "birovdan", "kimgadir",
+    "kimdandir", "odamga", "odamdan", "hamma", "hammaga", "nimaga", "nimadan", "shunga", "shundan", "bunga", "bundan",
+    "ishxonaga", "ishxonadan", "ofisga", "ofisdan", "kassaga", "kassadan", "hisobga", "hisobdan", "qaytarishga",
+}

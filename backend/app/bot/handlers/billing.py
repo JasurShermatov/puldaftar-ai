@@ -6,6 +6,7 @@ from uuid import UUID
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot import keyboards as kb
@@ -40,7 +41,8 @@ async def _show_plans(target: Message, user: User, edit: bool = False):
 
 @router.message(Command("plan"))
 @router.message(F.text == T.BTN_PLAN)
-async def plan(message: Message, user: User):
+async def plan(message: Message, user: User, state: FSMContext):
+    await state.clear()
     await _show_plans(message, user)
 
 

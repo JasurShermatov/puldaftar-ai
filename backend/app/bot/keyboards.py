@@ -20,9 +20,9 @@ def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=T.BTN_DASHBOARD)],
         [KeyboardButton(text=T.BTN_TODAY), KeyboardButton(text=T.BTN_REPORTS)],
-        [KeyboardButton(text=T.BTN_AI), KeyboardButton(text=T.BTN_EXPORT)],
-        [KeyboardButton(text=T.BTN_PLAN), KeyboardButton(text=T.BTN_SETTINGS)],
-        [KeyboardButton(text=T.BTN_HELP)] + ([KeyboardButton(text=T.BTN_ADMIN)] if is_admin else []),
+        [KeyboardButton(text=T.BTN_AI), KeyboardButton(text=T.BTN_DEBTS)],
+        [KeyboardButton(text=T.BTN_EXPORT), KeyboardButton(text=T.BTN_PLAN)],
+        [KeyboardButton(text=T.BTN_SETTINGS), KeyboardButton(text=T.BTN_HELP)] + ([KeyboardButton(text=T.BTN_ADMIN)] if is_admin else []),
     ]
     return ReplyKeyboardMarkup(
         resize_keyboard=True,
@@ -68,11 +68,61 @@ def categories(tx_id: str, cats: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def confirm_pending(pid: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
+def confirm_pending(pid: str, alt_debt: bool = False) -> InlineKeyboardMarkup:
+    rows = [[
         InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"pd:ok:{pid}"),
         InlineKeyboardButton(text="❌ Bekor", callback_data=f"pd:no:{pid}"),
-    ]])
+    ]]
+    if alt_debt:
+        rows.insert(0, [InlineKeyboardButton(text="🤝 Bu qarz edi", callback_data=f"pd:debt:{pid}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def debt_actions(items: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    many = len(items) > 1
+    for n, it in enumerate(items, 1):
+        did = str(it["id"])
+        suffix = f" {n}" if many else ""
+        rows.append([
+            InlineKeyboardButton(text=f"✅ Qaytarildi{suffix}", callback_data=f"dbt:paid:{did}"),
+            InlineKeyboardButton(text=f"⏰ Muddat{suffix}", callback_data=f"dbt:due:{did}"),
+            InlineKeyboardButton(text=f"🗑{suffix}", callback_data=f"dbt:del:{did}"),
+        ])
+    rows.append([InlineKeyboardButton(text="📋 Barcha qarzlar", web_app=WebAppInfo(url=webapp_url("?tab=debts")))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def debt_due_options(debt_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="+1 kun", callback_data=f"dbt:snooze:{debt_id}:1"),
+         InlineKeyboardButton(text="+3 kun", callback_data=f"dbt:snooze:{debt_id}:3"),
+         InlineKeyboardButton(text="+1 hafta", callback_data=f"dbt:snooze:{debt_id}:7"),
+         InlineKeyboardButton(text="+1 oy", callback_data=f"dbt:snooze:{debt_id}:30")],
+        [InlineKeyboardButton(text="✖️ Yopish", callback_data="noop:close")],
+    ])
+
+
+def debt_reminder(debt_id: str, direction: str) -> InlineKeyboardMarkup:
+    label = "✅ Qaytardi" if direction == "given" else "✅ Qaytardim"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=f"dbt:paid:{debt_id}"),
+         InlineKeyboardButton(text="⏰ +3 kun", callback_data=f"dbt:snooze:{debt_id}:3")],
+        [InlineKeyboardButton(text="📋 Qarzlar", web_app=WebAppInfo(url=webapp_url("?tab=debts")))],
+    ])
+
+
+def debts_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Qarzlar ro'yxati (Dashboard)", web_app=WebAppInfo(url=webapp_url("?tab=debts")))],
+    ])
+
+
+def ai_chat_exit() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Chatda davom etish (Dashboard)", web_app=WebAppInfo(url=webapp_url("?tab=ai")))],
+        [InlineKeyboardButton(text="✖️ Suhbatni tugatish", callback_data="aichat:exit")],
+    ])
 
 
 def amount_options(pid: str, options: list[int]) -> InlineKeyboardMarkup:
@@ -101,10 +151,11 @@ def export_menu() -> InlineKeyboardMarkup:
 
 
 def ai_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="📅 Bugungi", callback_data="ai:daily"),
-        InlineKeyboardButton(text="🗓 Haftalik chuqur", callback_data="ai:weekly"),
-    ]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 Bugungi", callback_data="ai:daily"),
+         InlineKeyboardButton(text="🗓 Haftalik chuqur", callback_data="ai:weekly")],
+        [InlineKeyboardButton(text="💬 Savol berish (AI chat)", callback_data="aichat:start")],
+    ])
 
 
 def settings(report_enabled: bool) -> InlineKeyboardMarkup:

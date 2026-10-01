@@ -2,7 +2,7 @@
 
 Ishga tushirish: pytest -q   (yoki pytest bo'lmasa: python -m tests.test_parser)
 """
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.services.parsing.local_parser import parse_local
@@ -126,6 +126,71 @@ def test_english_and_mixed():
     assert r.items[0].occurred_at.date() == (NOW - timedelta(days=1)).date()
     r = _one("Такси сто пятьдесят тысяч")
     assert r.items[0].amount == 150_000
+
+
+def test_found_and_lost():
+    r = _one("ko'chadan 100 ming topib oldim")
+    assert r.items[0].type.value == "income" and r.items[0].category_key == "found" and r.items[0].amount == 100_000
+    r = _one("100 ming yo'qotib qo'ydim")
+    assert r.items[0].type.value == "expense" and r.items[0].category_key == "loss"
+    r = _one("yutib oldim 300 ming")
+    assert r.items[0].type.value == "income" and r.items[0].category_key == "found"
+
+
+def test_debt_given_with_due():
+    r = _one("Jasurga 100 ming qarz berdim 2 kunga")
+    assert not r.items and len(r.debts) == 1
+    d = r.debts[0]
+    assert (d.direction, d.amount, d.counterparty) == ("given", 100_000, "Jasur")
+    assert d.due_at.date() == (NOW + timedelta(days=2)).date()
+    assert d.confidence >= 0.85
+
+
+def test_debt_taken_with_due_and_name_after():
+    r = _one("500 ming qarz oldim 3 kunga Jasurdan")
+    d = r.debts[0]
+    assert (d.direction, d.amount, d.counterparty) == ("taken", 500_000, "Jasur")
+    assert d.due_at.date() == (NOW + timedelta(days=3)).date()
+
+
+def test_debt_russian_english_cyrillic():
+    r = _one("Дал в долг Азизу 200 тысяч на неделю")
+    d = r.debts[0]
+    assert (d.direction, d.amount, d.counterparty) == ("given", 200_000, "Азиз")
+    assert d.due_at.date() == (NOW + timedelta(days=7)).date()
+    r = _one("Lent 50k to Bob for 3 days")
+    assert (r.debts[0].direction, r.debts[0].counterparty, r.debts[0].amount) == ("given", "Bob", 50_000)
+    r = _one("Шерзодга 50 минг қарз бердим 2 кунга")
+    assert (r.debts[0].direction, r.debts[0].counterparty) == ("given", "Шерзод")
+
+
+def test_debt_without_name_needs_confirm():
+    r = _one("qarz oldim 200 ming")
+    assert r.debts and r.debts[0].direction == "taken" and r.debts[0].confidence < 0.85
+
+
+def test_ambiguous_transfer_has_alt_debt():
+    r = _one("Akmalga 2 million berdim")
+    assert r.items[0].confidence < 0.85 and r.alt_debt is not None
+    assert (r.alt_debt.direction, r.alt_debt.counterparty) == ("given", "Akmal")
+    r = _one("Akmaldan 500 ming oldim")
+    assert r.items[0].type.value == "income" and r.alt_debt and r.alt_debt.direction == "taken"
+
+
+def test_repayments():
+    r = _one("Jasur qarzini qaytardi")
+    assert r.repayments and r.repayments[0].direction == "given" and r.repayments[0].counterparty == "Jasur"
+    assert r.repayments[0].amount is None
+    r = _one("Jasurga qarzimni qaytardim 300 ming")
+    assert r.repayments[0].direction == "taken" and r.repayments[0].amount == 300_000
+
+
+def test_due_variants():
+    assert _one("Dilshodga 1 million qarz berdim jumagacha").debts[0].due_at.date().weekday() == 4
+    assert _one("Jasurdan 500 ming qarz oldim 15 oktabrgacha").debts[0].due_at.date() == date(2026, 10, 15)
+    assert _one("Aliga 300 ming qarz berdim ertagacha").debts[0].due_at.date() == (NOW + timedelta(days=1)).date()
+    assert _one("Aliga 300 ming qarz berdim bir haftaga").debts[0].due_at.date() == (NOW + timedelta(days=7)).date()
+    assert _one("Aliga 300 ming qarz berdim").debts[0].due_at is None
 
 
 if __name__ == "__main__":

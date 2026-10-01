@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -29,13 +30,43 @@ class ParsedItem(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+DebtDirection = Literal["given", "taken"]   # given = men berdim (menga qaytarishadi), taken = men oldim
+
+
+class ParsedDebt(BaseModel):
+    """«Jasurga 100 ming qarz berdim 2 kunga» → direction=given, counterparty=Jasur, due_at=+2 kun."""
+    direction: DebtDirection
+    amount: int = Field(gt=0, lt=1_000_000_000_000)
+    counterparty: str = ""
+    note: str = ""
+    occurred_at: datetime
+    due_at: datetime | None = None
+    confidence: float = Field(ge=0, le=1)
+
+
+class ParsedRepayment(BaseModel):
+    """«Jasur qarzini qaytardi» → direction=given (menga qaytarildi); «qarzimni qaytardim» → taken."""
+    direction: DebtDirection
+    amount: int | None = Field(default=None, gt=0, lt=1_000_000_000_000)   # None = to'liq
+    counterparty: str = ""
+    confidence: float = Field(ge=0, le=1)
+
+
 class ParseResult(BaseModel):
     items: list[ParsedItem] = []
+    debts: list[ParsedDebt] = []
+    repayments: list[ParsedRepayment] = []
+    # «Akmalga 2 million berdim» — xarajat ham, qarz ham bo'lishi mumkin: tugma bilan tanlatamiz
+    alt_debt: ParsedDebt | None = None
     needs_clarification: bool = False
     clarification_question: str | None = None
     # "Reklama 800" kabi holatlarda tugma variantlari
     amount_options: list[int] = []
     engine: str = "local"                 # local | llm | llm+local
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.items or self.debts or self.repayments)
 
 
 class User(BaseModel):
