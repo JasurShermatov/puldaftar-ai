@@ -74,9 +74,15 @@ fi
 
 say "Cron: watchdog (har 2 daqiqa) + zaxira (03:00)"
 chmod +x "$ROOT"/scripts/*.sh
-( crontab -l 2>/dev/null | grep -v 'hisobchi/scripts/watchdog.sh' | grep -v 'hisobchi/scripts/backup.sh' ;
-  echo "*/2 * * * * $ROOT/scripts/watchdog.sh >> /var/log/hisobchi-watchdog.log 2>&1" ;
-  echo "0 3 * * * cd $ROOT && ./scripts/backup.sh >> /var/log/hisobchi-backup.log 2>&1" ) | crontab -
+command -v crontab >/dev/null || { apt-get install -y -qq cron >/dev/null; systemctl enable --now cron >/dev/null 2>&1 || true; }
+EXISTING="$(crontab -l 2>/dev/null || true)"
+EXISTING="$(printf '%s\n' "$EXISTING" | grep -v 'hisobchi/scripts/watchdog.sh' | grep -v 'hisobchi/scripts/backup.sh' | sed '/^$/d' || true)"
+{
+  [ -n "$EXISTING" ] && printf '%s\n' "$EXISTING"
+  echo "*/2 * * * * $ROOT/scripts/watchdog.sh >> /var/log/hisobchi-watchdog.log 2>&1"
+  echo "0 3 * * * cd $ROOT && ./scripts/backup.sh >> /var/log/hisobchi-backup.log 2>&1"
+} | crontab -
+systemctl restart cron >/dev/null 2>&1 || true
 crontab -l | sed 's/^/   /'
 
 say "Tekshiruv"
