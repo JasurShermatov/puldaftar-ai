@@ -15,14 +15,23 @@ say() { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 export DEBIAN_FRONTEND=noninteractive
 say "Paketlar"
 apt-get update -qq
-apt-get install -y -qq ufw fail2ban unattended-upgrades curl >/dev/null
+apt-get install -y -qq ufw fail2ban unattended-upgrades curl >/dev/null || apt-get install -y ufw fail2ban unattended-upgrades curl
 
 say "Firewall (UFW): 22, 80, 443"
-SSH_PORT="$(grep -E '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)"; SSH_PORT="${SSH_PORT:-22}"
+SSH_PORT="$( { grep -hE '^Port ' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true; } | awk '{print $2}' | head -1)"
+SSH_PORT="${SSH_PORT:-22}"
+echo "   SSH port: ${SSH_PORT}"
+# Hozirgi SSH sessiya shu portdan kelayotganini tekshiramiz — aks holda o'zimizni qulflab qo'ymaylik
+CUR_PORT="$(echo "${SSH_CONNECTION:-}" | awk '{print $4}')"
+if [ -n "$CUR_PORT" ] && [ "$CUR_PORT" != "$SSH_PORT" ]; then
+  echo "   [!] Siz ${CUR_PORT}-port orqali ulangansiz, konfiguratsiyada ${SSH_PORT}. Ikkalasi ham ochiq qoldiriladi."
+  EXTRA_PORT="$CUR_PORT"
+fi
 ufw --force reset >/dev/null
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
 ufw limit "${SSH_PORT}/tcp" comment 'SSH (rate-limited)' >/dev/null
+[ -n "${EXTRA_PORT:-}" ] && ufw limit "${EXTRA_PORT}/tcp" comment 'SSH (joriy sessiya)' >/dev/null
 ufw allow 80/tcp comment 'HTTP' >/dev/null
 ufw allow 443/tcp comment 'HTTPS' >/dev/null
 ufw --force enable >/dev/null
