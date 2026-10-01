@@ -55,6 +55,11 @@ services:
     build: ./frontend
     restart: unless-stopped
     depends_on: [api]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -T 3 -O /dev/null http://127.0.0.1/health/live || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Tashqi nginx: 80/443, HTTPS (certbot sertifikati). Sertifikat yo'q bo'lsa HTTP rejimida ishlaydi.
   proxy:
@@ -69,6 +74,11 @@ services:
       - letsencrypt:/etc/letsencrypt
       - certbot_www:/var/www/certbot:ro
     depends_on: [web]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -T 3 -O /dev/null http://127.0.0.1/.well-known/acme-challenge/ping || [ $? -eq 8 ]"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Let's Encrypt: birinchi sertifikat ./scripts/ssl.sh bilan, keyin har 12 soatda avtomatik yangilanadi.
   certbot:

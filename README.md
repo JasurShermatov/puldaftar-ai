@@ -161,7 +161,12 @@ Keyinroq domen olsangiz: `.env` da `DOMAIN=sizning.domen` va `PUBLIC_BASE_URL=ht
 `./scripts/ssl.sh` (certbot sertifikat oladi) va `docker compose up -d --force-recreate api worker`.
 Sertifikat har 12 soatda avtomatik tekshiriladi va yangilanadi (certbot konteyneri).
 
-Foydali buyruqlar: `docker compose logs -f api worker` · `docker compose down` · `docker compose up -d --build` (yangilash).
+Foydali buyruqlar: `docker compose logs -f api worker` · `docker compose down` · `./scripts/update.sh` (GitHub'dan yangilash).
+
+**Barqarorlik va xavfsizlik (bir marta):** `sudo ./scripts/harden.sh` — UFW firewall (22/80/443), fail2ban, avtomatik
+xavfsizlik yangilanishlari, Docker log rotatsiyasi, **watchdog** (har 2 daqiqada saytni tekshiradi, yiqilsa o'zi tiklaydi
+va superadminga Telegram orqali xabar beradi) va kunlik DB zaxira croni. `update.sh` ham yangilashdan keyin saytni tekshirib,
+kerak bo'lsa proxy'ni qayta yo'naltiradi.
 
 ---
 

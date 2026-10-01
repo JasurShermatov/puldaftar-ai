@@ -24,14 +24,29 @@ render || true
 nginx -t
 
 (
+  n=0; fails=0
   while :; do
-    sleep 300
-    if render; then
-      nginx -t && nginx -s reload || true
-    elif [ -f /etc/letsencrypt/.renewed ]; then
-      rm -f /etc/letsencrypt/.renewed
-      echo "proxy: sertifikat yangilandi, reload"
-      nginx -s reload || true
+    sleep 30
+    n=$((n + 1))
+    # upstream (web) tirikmi? 3 marta ketma-ket yiqilsa — DNS qayta o'qilishi uchun reload
+    if wget -q -T 5 -O /dev/null "http://web:80/health/live" 2>/dev/null; then
+      fails=0
+    else
+      fails=$((fails + 1))
+      if [ "$fails" -ge 3 ]; then
+        echo "proxy: upstream javob bermayapti, reload"
+        nginx -s reload || true
+        fails=0
+      fi
+    fi
+    if [ $((n % 10)) -eq 0 ]; then       # har 5 daqiqada: sertifikat/konfig
+      if render; then
+        nginx -t && nginx -s reload || true
+      elif [ -f /etc/letsencrypt/.renewed ]; then
+        rm -f /etc/letsencrypt/.renewed
+        echo "proxy: sertifikat yangilandi, reload"
+        nginx -s reload || true
+      fi
     fi
   done
 ) &
