@@ -72,6 +72,18 @@ async def _render_outcome(user: User, out: tx_svc.IngestOutcome, reply_to: Messa
         else:
             await say(text, kb.debt_actions(out.saved_debts))
         shown = True
+    if out.pending_id and out.pending_kind in ("repay", "repay_pick"):
+        text = views.repay_pending_message(out)
+        if out.pending_kind == "repay":
+            inc = any(i.get("type") == "income" for i in out.pending_items)
+            markup = kb.confirm_repay(str(out.pending_id), out.has_fallback, out.has_alt_debt, inc)
+        else:
+            markup = kb.repay_pick(str(out.pending_id), out.repay_options, out.has_fallback)
+        if shown:
+            await reply_to.answer(text, reply_markup=markup)
+        else:
+            await say(text, markup)
+        return
     if out.pending_id and (out.pending_items or out.pending_debts):
         text = views.pending_message(out.pending_items, out.question, out.pending_debts, user.timezone)
         markup = kb.confirm_pending(str(out.pending_id), alt_debt=out.has_alt_debt)
@@ -211,16 +223,24 @@ async def pending_cb(cb: CallbackQuery, user: User):
         pid = UUID(parts[2])
     except (IndexError, ValueError):
         return await cb.answer()
-    if parts[1] in ("ok", "debt"):
-        res = await tx_svc.confirm_pending(user, pid, choice="debt" if parts[1] == "debt" else "ok")
+    if parts[1] in ("ok", "debt", "rp", "item", "pick"):
+        choice = {"ok": "ok", "debt": "debt", "rp": "repay", "item": "item", "pick": "repay"}[parts[1]]
+        pick = int(parts[3]) if parts[1] == "pick" and len(parts) == 4 and parts[3].isdigit() else None
+        res = await tx_svc.confirm_pending(user, pid, choice=choice, pick=pick)
         await cb.answer()
         if not res.ok:
             return await cb.message.edit_text("Bu so'rov eskirgan yoki allaqachon saqlangan.")
+        if res.repaid:
+            await cb.message.edit_text(views.repaid_message(res.repaid, res.repay_status or "paid", user.timezone),
+                                       reply_markup=kb.debt_actions(res.repaid) if res.repay_status == "partial" else None)
         if res.saved:
-            await cb.message.edit_text(await views.saved_message(user, res.saved), reply_markup=kb.tx_actions(res.saved))
+            if res.repaid:
+                await cb.message.answer(await views.saved_message(user, res.saved), reply_markup=kb.tx_actions(res.saved))
+            else:
+                await cb.message.edit_text(await views.saved_message(user, res.saved), reply_markup=kb.tx_actions(res.saved))
         if res.saved_debts:
             text = views.debt_saved_message(res.saved_debts, user.timezone)
-            if res.saved:
+            if res.saved or res.repaid:
                 await cb.message.answer(text, reply_markup=kb.debt_actions(res.saved_debts))
             else:
                 await cb.message.edit_text(text, reply_markup=kb.debt_actions(res.saved_debts))

@@ -119,6 +119,8 @@ DELETE_CONFIRM = (
     "va qayta tiklab bo'lmaydi.\n\nDavom etasizmi?"
 )
 DELETE_DONE = "✅ Barcha ma'lumotlaringiz o'chirildi. Qayta boshlash uchun /start bosing."
+DELETE_DONE_ADMIN = ("✅ Barcha ma'lumotlaringiz (xarajat, daromad, qarzlar, AI suhbat) o'chirildi.\n"
+                     "Superadmin akkaunti saqlanib qoldi — u .env dagi SUPERADMIN_IDS orqali belgilanadi.")
 
 TRIAL_D2 = "⏳ Bepul davr tugashiga <b>2 kun</b> qoldi. Uzluksiz foydalanish uchun «💳 Obuna» bo'limiga o'ting."
 TRIAL_END = ("⌛️ <b>Bepul davr tugadi.</b> Ma'lumotlaringiz saqlanadi.\n"

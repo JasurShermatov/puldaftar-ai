@@ -130,6 +130,18 @@ async def delete(conn, user_id: UUID) -> None:
     await conn.execute("DELETE FROM users WHERE id=$1", user_id)
 
 
+async def wipe_data(conn, user_id: UUID) -> dict:
+    """Akkauntni saqlab, barcha moliyaviy ma'lumotlarni o'chiradi (superadmin uchun va «tozalash» uchun).
+    Obuna, rol va sozlamalar qoladi."""
+    counts = {}
+    for table in ("transactions", "debts", "pending_parses", "ai_chat_messages", "ai_insights", "category_rules"):
+        res = await conn.execute(f"DELETE FROM {table} WHERE user_id=$1", user_id)
+        counts[table] = int(res.split()[-1]) if res.split()[-1].isdigit() else 0
+    await conn.execute("DELETE FROM categories WHERE user_id=$1", user_id)      # faqat shaxsiy kategoriyalar
+    await conn.execute("DELETE FROM reports WHERE user_id=$1 AND period_type IN ('weekly','monthly','yearly')", user_id)
+    return counts
+
+
 def tg_guard_hash(tg_id: int) -> str:
     from app.core.security import phrase_hash
     return phrase_hash("trial", str(tg_id))

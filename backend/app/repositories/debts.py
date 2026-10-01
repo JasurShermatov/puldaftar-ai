@@ -150,23 +150,40 @@ async def mark_reminded(conn, debt_id: UUID, day) -> None:
     await conn.execute("UPDATE debts SET last_reminded_on=$2 WHERE id=$1", debt_id, day)
 
 
-async def find_open_match(conn, user_id: UUID, direction: str, counterparty: str, amount: int | None) -> list[dict]:
-    """Qaytarish uchun mos ochiq qarzlar: yo'nalish bo'yicha; ism/summa bo'yicha tartiblangan."""
-    rows = await list_(conn, user_id, "open")
-    rows = [r for r in rows if r["direction"] == direction]
-    if not rows:
-        return []
+def _name_key(s: str) -> str:
     from app.services.parsing.normalize import normalize
-    who = normalize(counterparty or "")[:4]
+    n = normalize(s or "")
+    for suf in ("ning", "ni", "ga", "dan", "ka", "qa"):
+        if n.endswith(suf) and len(n) - len(suf) >= 3:
+            n = n[: -len(suf)]
+            break
+    return n
 
-    def score(r: dict) -> tuple:
-        name = normalize(r["counterparty"] or "")
-        s_name = 2 if who and name.startswith(who) else (1 if not who else 0)
-        s_amt = 1 if amount and r["remaining"] == amount else 0
-        return (s_name, s_amt)
 
-    ranked = sorted(rows, key=score, reverse=True)
-    best = score(ranked[0])
-    if who and best[0] == 0 and len(rows) > 1:
-        return []           # ism aytilgan, lekin mos kelmadi — taxmin qilmaymiz
-    return [r for r in ranked if score(r) == best]
+def name_matches(a: str, b: str) -> bool:
+    """Ismlar mosligi (lotin/kirill farqsiz, qo'shimchasiz, kichik imlo farqi bilan): Alisher ≈ Алишер ≈ Alisherjon."""
+    x, y = _name_key(a), _name_key(b)
+    if not x or not y:
+        return False
+    if x == y or x.startswith(y) or y.startswith(x):
+        return True
+    k = min(len(x), len(y), 5)
+    return k >= 4 and x[:k] == y[:k]
+
+
+async def candidates(conn, user_id: UUID, direction: str, counterparty: str) -> tuple[list[dict], list[dict]]:
+    """(ism bo'yicha mos ochiq qarzlar, shu yo'nalishdagi barcha ochiq qarzlar)."""
+    rows = [r for r in await list_(conn, user_id, "open") if r["direction"] == direction]
+    named = [r for r in rows if counterparty and name_matches(r["counterparty"], counterparty)] if counterparty else []
+    return named, rows
+
+
+async def find_open_match(conn, user_id: UUID, direction: str, counterparty: str, amount: int | None) -> list[dict]:
+    """Qaytarish uchun mos ochiq qarzlar (eski API): ism bo'yicha, bo'lmasa yagona ochiq qarz."""
+    named, rows = await candidates(conn, user_id, direction, counterparty)
+    if named:
+        exact = [r for r in named if amount and r["remaining"] == amount]
+        return exact if len(exact) == 1 else named
+    if counterparty:
+        return []
+    return rows

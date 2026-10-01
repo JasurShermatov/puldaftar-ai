@@ -182,14 +182,25 @@ export function AddSheet({ open, onClose, categories, onDone }: { open: boolean;
     }
   }
 
-  async function confirm(choice: "ok" | "debt" | "no") {
+  async function confirm(choice: "ok" | "debt" | "no" | "repay" | "item", pick?: number) {
     if (!result?.pending_id) return;
     setBusy(true);
     try {
-      if (choice === "no") await api.del(`/api/pending/${result.pending_id}`);
-      else await api.post(`/api/pending/${result.pending_id}/confirm?choice=${choice}`);
-      onDone(choice === "no" ? "Bekor qilindi" : choice === "debt" ? "🤝 Qarz yozildi" : "✅ Saqlandi");
+      if (choice === "no") {
+        await api.del(`/api/pending/${result.pending_id}`);
+        onDone("Bekor qilindi");
+      } else {
+        const q = pick != null ? `&pick=${pick}` : "";
+        const r = await api.post<{ repaid: unknown[]; repay_status: string | null; saved: unknown[]; saved_debts: unknown[] }>(
+          `/api/pending/${result.pending_id}/confirm?choice=${choice}${q}`,
+        );
+        haptic("success");
+        onDone(r.repaid?.length ? (r.repay_status === "partial" ? "✅ Qisman qaytarildi" : "✅ Qarz yopildi") : choice === "debt" ? "🤝 Qarz yozildi" : "✅ Saqlandi");
+      }
       onClose();
+    } catch {
+      haptic("error");
+      onDone("Xatolik yuz berdi");
     } finally {
       setBusy(false);
     }
@@ -255,7 +266,49 @@ export function AddSheet({ open, onClose, categories, onDone }: { open: boolean;
           {result && result.kind !== "saved" && (
             <div className="notice">
               {result.kind === "expired" && <p>⌛️ Bepul davr tugagan. Botdagi «💳 Obuna» tugmasi orqali PRO ni faollashtiring.</p>}
-              {result.kind === "pending" && (
+              {result.kind === "pending" && (result.pending_kind === "repay" || result.pending_kind === "repay_pick") && (
+                <>
+                  <p>
+                    <b>🤝 Qarz qaytarilishi</b>
+                  </p>
+                  {result.pending_repay && (
+                    <p>
+                      {result.pending_repay.direction === "given" ? "➡️" : "⬅️"} <b>{result.pending_repay.who || "—"}</b> — qoldiq {money(result.pending_repay.remaining)}
+                      {result.pending_repay.amount ? ` · qaytarilgan ${money(result.pending_repay.amount)}` : ""}
+                    </p>
+                  )}
+                  {result.question && <p className="muted">❔ {result.question}</p>}
+                  {result.pending_kind === "repay" ? (
+                    <button className="btn primary full mt" onClick={() => confirm("repay")} disabled={busy}>
+                      ✅ Ha, qarzni yopish
+                    </button>
+                  ) : (
+                    <div className="chips mt">
+                      {result.repay_options.map((o) => (
+                        <button key={o.debt_id} className="chip" onClick={() => confirm("repay", o.idx)} disabled={busy}>
+                          {o.direction === "given" ? "➡️" : "⬅️"} {o.who || "—"} — {money(o.remaining)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="row gap mt">
+                    <button className="btn" onClick={() => confirm("no")} disabled={busy}>
+                      Bekor
+                    </button>
+                    {result.has_fallback && (
+                      <button className="btn grow" onClick={() => confirm("item")} disabled={busy}>
+                        {result.pending_items[0]?.type === "income" ? "➕ Yo'q, daromad" : "💸 Yo'q, xarajat"}
+                      </button>
+                    )}
+                    {result.has_alt_debt && (
+                      <button className="btn grow" onClick={() => confirm("debt")} disabled={busy}>
+                        🤝 Yangi qarz
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+              {result.kind === "pending" && result.pending_kind !== "repay" && result.pending_kind !== "repay_pick" && (
                 <>
                   <p>
                     <b>Shu to'g'rimi?</b>

@@ -223,10 +223,15 @@ async def delete_ask(cb: CallbackQuery):
 
 
 @router.callback_query(F.data == "del:yes")
-async def delete_yes(cb: CallbackQuery, user: User):
-    if user.is_superadmin:
-        return await cb.answer("Superadmin o'chira olmaydi", show_alert=True)
+async def delete_yes(cb: CallbackQuery, user: User, state: FSMContext):
+    await state.clear()
     async with db.system_tx() as conn:
+        if user.is_superadmin:
+            # superadmin akkaunti .env dan belgilanadi — o'chirilmaydi, ma'lumotlari tozalanadi
+            await userrepo.wipe_data(conn, user.id)
+            await sysrepo.event(conn, "data_wiped", user.id)
+            await cb.answer()
+            return await cb.message.edit_text(T.DELETE_DONE_ADMIN)
         await userrepo.delete(conn, user.id)
         await sysrepo.event(conn, "account_deleted", None)
     await cb.answer()

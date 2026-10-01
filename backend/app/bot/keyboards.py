@@ -78,6 +78,35 @@ def confirm_pending(pid: str, alt_debt: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def confirm_repay(pid: str, has_fallback: bool, alt_debt: bool, fallback_is_income: bool = False) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="✅ Ha, qarzni yopish", callback_data=f"pd:rp:{pid}")]]
+    second = []
+    if has_fallback:
+        second.append(InlineKeyboardButton(text=("➕ Yo'q, daromad" if fallback_is_income else "💸 Yo'q, xarajat"),
+                                           callback_data=f"pd:item:{pid}"))
+    if alt_debt:
+        second.append(InlineKeyboardButton(text="🤝 Yangi qarz", callback_data=f"pd:debt:{pid}"))
+    if second:
+        rows.append(second)
+    rows.append([InlineKeyboardButton(text="❌ Bekor", callback_data=f"pd:no:{pid}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def repay_pick(pid: str, options: list[dict], has_fallback: bool = False) -> InlineKeyboardMarkup:
+    from app.core.timeutil import fmt_money_short
+
+    rows = []
+    for o in options[:8]:
+        who = o.get("who") or "—"
+        arrow = "➡️" if o["direction"] == "given" else "⬅️"
+        rows.append([InlineKeyboardButton(text=f"{arrow} {who} — {fmt_money_short(o['remaining'])} so'm"[:60],
+                                          callback_data=f"pd:pick:{pid}:{o['idx']}")])
+    if has_fallback:
+        rows.append([InlineKeyboardButton(text="💸 Hech biri emas — oddiy yozuv", callback_data=f"pd:item:{pid}")])
+    rows.append([InlineKeyboardButton(text="❌ Bekor", callback_data=f"pd:no:{pid}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def debt_actions(items: list[dict]) -> InlineKeyboardMarkup:
     rows = []
     many = len(items) > 1

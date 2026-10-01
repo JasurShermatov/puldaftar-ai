@@ -16,6 +16,7 @@ from app.core.timeutil import local_now, period_bounds, to_utc_range
 from app.db.database import db
 from app.domain.models import User
 from app.repositories import categories as catrepo
+from app.repositories import system as sysrepo
 from app.repositories import transactions as txrepo
 from app.repositories import users as userrepo
 from app.services import ai_chat
@@ -124,18 +125,24 @@ def _ingest_json(out: tx_svc.IngestOutcome, user: User) -> dict:
         "pending_items": out.pending_items,
         "pending_debts": out.pending_debts,
         "has_alt_debt": out.has_alt_debt,
+        "pending_kind": out.pending_kind,
+        "pending_repay": out.pending_repay,
+        "repay_options": out.repay_options,
+        "has_fallback": out.has_fallback,
         "question": out.question,
         "amount_options": out.amount_options,
     }
 
 
 @router.post("/pending/{pending_id}/confirm")
-async def confirm_pending(pending_id: UUID, choice: str = Query(default="ok", pattern="^(ok|debt)$"),
-                          user: User = Depends(current_user)):
-    res = await tx_svc.confirm_pending(user, pending_id, choice=choice)
+async def confirm_pending(pending_id: UUID, choice: str = Query(default="ok", pattern="^(ok|debt|repay|item)$"),
+                          pick: int | None = Query(default=None, ge=0, le=50), user: User = Depends(current_user)):
+    res = await tx_svc.confirm_pending(user, pending_id, choice=choice, pick=pick)
     today = local_now(user.timezone).date()
     return {"saved": [report_svc.serialize_tx(r, user.timezone) for r in res.saved],
-            "saved_debts": [debt_svc.serialize(d, user.timezone, today) for d in res.saved_debts]}
+            "saved_debts": [debt_svc.serialize(d, user.timezone, today) for d in res.saved_debts],
+            "repaid": [debt_svc.serialize(d, user.timezone, today) for d in res.repaid],
+            "repay_status": res.repay_status}
 
 
 @router.post("/pending/{pending_id}/amount/{amount}")
@@ -341,11 +348,21 @@ async def plans_to_chat(user: User = Depends(current_user)):
 
 
 @router.delete("/me")
-async def delete_me(user: User = Depends(current_user)):
-    """Userning barcha ma'lumotlari butunlay o'chiriladi (CASCADE)."""
-    if user.is_superadmin:
-        raise HTTPException(400, "superadmin o'chira olmaydi")
+async def delete_me(mode: str = Query(default="auto", pattern="^(auto|data|account)$"),
+                    user: User = Depends(current_user)):
+    """Barcha ma'lumotlarni o'chirish.
+    mode=data — faqat ma'lumotlar (xarajat, daromad, qarz, AI suhbat), akkaunt va obuna qoladi;
+    mode=account — akkaunt butunlay (CASCADE); auto — superadmin uchun data, boshqalar uchun account."""
+    if mode == "auto":
+        mode = "data" if user.is_superadmin else "account"
+    if mode == "account" and user.is_superadmin:
+        mode = "data"       # superadmin akkaunti o'chirilmaydi (.env SUPERADMIN_IDS) — ma'lumotlari tozalanadi
     async with db.system_tx() as conn:
+        if mode == "data":
+            counts = await userrepo.wipe_data(conn, user.id)
+            await sysrepo.event(conn, "data_wiped", user.id)
+            return {"ok": True, "mode": "data", "deleted": counts}
         await userrepo.delete(conn, user.id)
-    return {"ok": True}
+        await sysrepo.event(conn, "account_deleted", None)
+    return {"ok": True, "mode": "account"}
 

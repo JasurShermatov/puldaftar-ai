@@ -13,8 +13,13 @@ Har bir yozuv uchun `kind`:
 - "income" — pul keldi (maosh, tushum, bonus, sovg'a, topib olish, yutuq, qaytarilgan pul).
 - "debt_given" — MEN qarz BERDIM (kimgadir, menga qaytarishi kerak): "Jasurga 100 ming qarz berdim 2 kunga", "дал в долг", "lent".
 - "debt_taken" — MEN qarz OLDIM (kimdandir, men qaytarishim kerak): "Jasurdan 500 ming qarz oldim", "взял в долг", "borrowed".
-- "debt_repaid_to_me" — kimdir MENGA qarzini qaytardi: "Jasur qarzini qaytardi".
-- "debt_repaid_by_me" — MEN qarzimni qaytardim: "Jasurga qarzimni qaytardim".
+- "debt_repaid_to_me" — kimdir MENGA qarzini qaytardi: "Jasur qarzini qaytardi", "Alisher pulimni berdi",
+  "Alisherdan qarzimni oldim", "Азиз вернул долг".
+- "debt_repaid_by_me" — MEN qarzimni qaytardim: "Jasurga qarzimni qaytardim", "Alisherni qarzini berdim",
+  "Alisherni 100 ming pulini tashlab berdim", "Alisherning qarzini uzdim", "вернул Азизу долг".
+  DIQQAT: "Jasurga 100 ming qarz berdim" = debt_given (yangi qarz), "Jasurni qarzini berdim" = debt_repaid_by_me (qaytarish).
+  "Alisherga 100 ming berdim" (qarz so'zi yo'q) = expense, confidence <= 0.65 — foydalanuvchida Alisher bilan ochiq qarz bo'lsa
+  tizim o'zi qaytarish deb taklif qiladi.
 
 Qoidalar:
 - Har bir alohida summa = alohida yozuv. "Taksiga 35 ming, obedga 80 ming" → 2 ta.

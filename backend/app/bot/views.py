@@ -71,6 +71,21 @@ def pending_message(items: list[dict], question: str | None, debts: list[dict] |
     return "\n".join(lines)
 
 
+def repay_pending_message(out) -> str:
+    """Qaytarish tasdig'i: topilgan qarz + savol."""
+    lines = ["🤝 <b>Qarz qaytarilishi</b>"]
+    r = out.pending_repay
+    if r:
+        who = e(r.get("who")) or "—"
+        arrow = "➡️" if r["direction"] == "given" else "⬅️"
+        lines.append(f"{arrow} <b>{who}</b> — qoldiq {fmt_money(r['remaining'])}")
+        if r.get("amount"):
+            lines.append(f"💵 Qaytarilgan: {fmt_money(r['amount'])}")
+    if out.question:
+        lines += ["", f"❔ {e(out.question)}"]
+    return "\n".join(lines)
+
+
 def debt_saved_message(rows: list[dict], tz_name: str) -> str:
     from app.services import debts as debt_svc
 

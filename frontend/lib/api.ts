@@ -132,9 +132,14 @@ export type IngestResult = {
   pending_items: PendingItem[];
   pending_debts: PendingDebt[];
   has_alt_debt: boolean;
+  pending_kind: "confirm" | "repay" | "repay_pick" | null;
+  pending_repay: RepayOption | null;
+  repay_options: RepayOption[];
+  has_fallback: boolean;
   question: string | null;
   amount_options: number[];
 };
+export type RepayOption = { idx?: number; debt_id: string; who: string; remaining: number; amount: number | null; direction: "given" | "taken"; due_at: string | null };
 
 export type ChatMsg = { id: number; role: "user" | "assistant"; content: string; created_at: string };
 export type ChatHistory = { messages: ChatMsg[]; suggestions: string[]; ai_enabled: boolean };

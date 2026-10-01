@@ -204,9 +204,14 @@ def detect_counterparty(raw: str, tokens: list[str], prefer: str) -> str:
         # "Jasur 100 ming qaytardi"
         for t in tokens:
             if is_word(t) and t not in L.NOT_A_NAME and t not in L.STOPWORDS and len(t) >= 3 and \
-                    not any(t.startswith(v) for v in ("qaytar", "berdi", "vernul", "otdal", "qarz")) and \
+                    not any(t.startswith(v) for v in ("qaytar", "berdi", "vernul", "otdal", "qarz", "pul", "oldi", "uzdi", "to'la", "tola", "yop", "tashla")) and \
                     not _match_keywords(t, [t], L.EXPENSE_KEYWORDS):
-                return _restore_case(raw, t)
+                base = t
+                for suf in (*_NAME_SUFFIXES_FROM, *_NAME_SUFFIXES_TO, "ning", "ni"):
+                    if t.endswith(suf) and len(t) - len(suf) >= 3:
+                        base = t[: -len(suf)]
+                        break
+                return _restore_case(raw, base)
         return ""
     for suffixes in order.get(prefer, (_NAME_SUFFIXES_TO, _NAME_SUFFIXES_FROM)):
         for t in tokens:
@@ -225,6 +230,80 @@ def detect_counterparty(raw: str, tokens: list[str], prefer: str) -> str:
         if wl not in L.NOT_A_NAME and wl not in L.STOPWORDS and not _match_keywords(wl, [wl], L.EXPENSE_KEYWORDS):
             return _restore_case(raw, wl)
     return ""
+
+
+_REPAY_STEMS = ("ber", "qaytar", "tashla", "uz", "to'la", "tola", "o'tkaz", "otkaz", "yop", "tushir", "jo'nat", "jonat")
+_MY_OBJ = ("qarzimni", "qarzimdan", "qarzim", "pulimni", "pulim", "pulimdan")
+_HIS_OBJ = ("qarzini", "qarzi", "qarzni", "qarzidan", "pulini", "puli", "pulni", "pulidan")
+
+
+def _verb_person(toks: list[str]) -> str | None:
+    """Qaytarish fe'li kim tomonidan: 'me' (berdim/qaytardim/berdik) yoki 'they' (berdi/qaytardi/berishdi)."""
+    for t in reversed(toks):
+        if t.startswith(_REPAY_STEMS):
+            if t.endswith(("dim", "dik", "ganman", "dimku")):
+                return "me"
+            if t.endswith(("di", "dilar", "shdi", "gan", "diku")):
+                return "they"
+    return None
+
+
+def _genitive_owner(raw: str, toks: list[str]) -> str:
+    """«Alisherni qarzini», «Alisherning pulini» → Alisher."""
+    for i, t in enumerate(toks):
+        if t.startswith(("qarz", "pul")) and i > 0:
+            for j in range(i - 1, -1, -1):
+                w = toks[j]
+                if w in L.NOT_A_NAME or w in L.STOPWORDS or not (w.isalpha() or "'" in w):
+                    continue
+                for suf in ("ning", "ni", "ing"):
+                    if w.endswith(suf) and len(w) - len(suf) >= 3 and w not in _MY_OBJ and w not in _HIS_OBJ:
+                        base = w[: -len(suf)]
+                        if not _match_keywords(base, [base], L.EXPENSE_KEYWORDS) and base not in L.NOT_A_NAME:
+                            return _restore_case(raw, base)
+    return ""
+
+
+def _contains_exact(text: str, words) -> bool:
+    """So'z chegarasi ikki tomondan: 'qarzini berdi' ⊄ 'qarzini berdim'."""
+    padded = f" {text} "
+    return any(f" {w} " in padded for w in words)
+
+
+def detect_repayment(raw: str, clause: str, toks: list[str]) -> tuple[str, str, bool] | None:
+    """Qaytaradi: (direction, counterparty, hard). direction: 'given' = menga qaytarildi, 'taken' = men qaytardim.
+    hard=True — «qarz» so'zi bilan aniq; False — «pulini berdim» kabi yumshoq (ochiq qarz bo'lsa qaytarish)."""
+    # 1) tayyor iboralar (uz/ru/en)
+    by_me = _contains_exact(clause, L.REPAY_BY_ME)
+    to_me = _contains_exact(clause, L.REPAY_TO_ME) and not by_me
+    if by_me or to_me:
+        who = _genitive_owner(raw, toks) or detect_counterparty(raw, toks, "subject" if to_me else "to")
+        return ("given" if to_me else "taken"), who, True
+    # 2) umumiy qolip: [Ism-ni] qarzini/pulini + berdim/qaytardim/tashlab berdim/uzdim (yoki 3-shaxs)
+    my_obj = any(t in _MY_OBJ for t in toks)
+    his_obj = any(t in _HIS_OBJ for t in toks)
+    if not (my_obj or his_obj):
+        return None
+    person = _verb_person(toks)
+    took = any(t in ("oldim", "olib oldim", "undirdim", "qaytarib oldim") for t in toks) or _contains_exact(clause, ["qaytarib oldim", "olib oldim"])
+    if took and my_obj:
+        direction, person = "given", "me"          # "Alisherdan qarzimni oldim" → menga qaytdi
+    elif not person:
+        return None
+    else:
+        # "qarzimni berdim" / "Alisherni qarzini berdim" → men qaytardim; "qarzini berdi" / "pulimni qaytardi" → menga
+        direction = "taken" if person == "me" else "given"
+    # "Jasurga 100 ming qarz berdim" — yangi qarz (qarz so'zi qo'shimchasiz) → bu yerga tushmaydi
+    hard = any(t.startswith("qarz") for t in toks)
+    who = _genitive_owner(raw, toks)
+    if not who:
+        prefer = "from" if took else ("to" if direction == "taken" else "subject")
+        who = detect_counterparty(raw, toks, prefer)
+        if not who and prefer != "subject":
+            who = detect_counterparty(raw, toks, "subject")
+    if not hard and not who:
+        return None          # "pulini berdim" — kim ekani noma'lum, yumshoq holat: oddiy yozuv bo'lib qoladi
+    return direction, who, hard
 
 
 def _is_name_token(t: str) -> bool:
@@ -290,23 +369,23 @@ def parse_local(raw_text: str, tz_name: str = "Asia/Tashkent", now: datetime | N
     result = ParseResult()
 
     # 0) Qarz qaytarildi / qaytardim (summa bo'lmasa ham ishlaydi)
+    soft_only = True
     for clause in _split_clauses(text):
         toks = tokenize(clause)
-        by_me = _contains(clause, L.REPAY_BY_ME)
-        to_me = _contains(clause, L.REPAY_TO_ME) and not by_me
-        if not (by_me or to_me):
+        rep = detect_repayment(raw_text, clause, toks)
+        if not rep:
             continue
+        direction, who, hard = rep
         spans = [s for s in find_amounts(toks) if not s.is_bare_small]
         amount = spans[0].value if spans else None
-        if to_me:
-            who = detect_counterparty(raw_text, toks, "subject")
-        else:
-            who = detect_counterparty(raw_text, toks, "to")
         result.repayments.append(ParsedRepayment(
-            direction="given" if to_me else "taken", amount=amount, counterparty=who,
-            confidence=0.9 if who else 0.75,
+            direction=direction, amount=amount, counterparty=who,
+            confidence=(0.9 if who else 0.75) if hard else 0.6,
         ))
-    if result.repayments:
+        soft_only = soft_only and not hard
+    # "qarz" so'zi aniq bo'lsa — bu faqat qaytarish. "pulini berdim" kabi yumshoq holatda xarajat/daromad
+    # variantini ham qaytaramiz: ingest mos ochiq qarz topsa qaytarish, topmasa oddiy yozuv deb hisoblaydi.
+    if result.repayments and not soft_only:
         return result
 
     # 1) bo'laklarga ajratish; bitta bo'lakda bir nechta summa bo'lsa — summalar orasidan bo'lamiz
@@ -345,6 +424,8 @@ def parse_local(raw_text: str, tz_name: str = "Asia/Tashkent", now: datetime | N
         segments.extend(before if score(before) > score(after) else after)
 
     if not segments:
+        if result.repayments:
+            return result
         return ParseResult(
             needs_clarification=True,
             clarification_question="Summani topa olmadim. Masalan: «Taksiga 35 ming» deb yozing yoki ayting.",
@@ -417,7 +498,8 @@ def parse_local(raw_text: str, tz_name: str = "Asia/Tashkent", now: datetime | N
                 conf = 0.8
                 # "Akmalga 2 million berdim" — qarz/o'tkazma bo'lishi mumkin
                 if any(t.endswith(_NAME_SUFFIXES_TO) and _is_name_token(t) for t in toks) and \
-                        _contains(clause, ["berdim", "o'tkazdim", "otkazdim", "tashladim", "dal", "perevel"]):
+                        (_contains(clause, ["berdim", "o'tkazdim", "otkazdim", "tashladim", "tashlab", "jo'natdim", "dal", "perevel"])
+                         or not is_expense_verb):
                     conf = 0.62
                     who = detect_counterparty(raw_text, toks, "to")
                     questions.append(f"{who or 'Bu'}ga berilgan pul — xarajatmi yoki qarzmi?")

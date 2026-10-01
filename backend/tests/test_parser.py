@@ -185,6 +185,26 @@ def test_repayments():
     assert r.repayments[0].direction == "taken" and r.repayments[0].amount == 300_000
 
 
+def test_repayment_phrasings():
+    # men qaytardim (taken = mening qarzim)
+    for t in ["Alisherni qarzini berdim", "Alisherni qarzini tashlab berdim", "Alisherning qarzini uzdim 200 ming",
+              "Alisherga qarzimni berdim", "Алишернинг қарзини бердим 100 минг"]:
+        r = _one(t)
+        assert r.repayments and r.repayments[0].direction == "taken", t
+        assert r.repayments[0].counterparty in ("Alisher", "Алишер"), t
+    # menga qaytardi (given = men bergan qarz)
+    for t in ["Alisher qarzini berdi", "Alisher pulimni qaytardi", "Alisherdan qarzimni oldim", "Dilshod qarzini to'liq qaytardi"]:
+        r = _one(t)
+        assert r.repayments and r.repayments[0].direction == "given", t
+    # yumshoq holat: "pulini berdim" — qaytarish taxmini + oddiy yozuv varianti birga
+    r = _one("Alisherni 100 ming pulini berdim")
+    assert r.repayments and r.repayments[0].direction == "taken" and r.repayments[0].confidence < 0.7
+    assert r.items and r.items[0].amount == 100_000
+    # yangi qarz bilan adashmasin
+    r = _one("Jasurga 100 ming qarz berdim 2 kunga")
+    assert not r.repayments and r.debts
+
+
 def test_due_variants():
     assert _one("Dilshodga 1 million qarz berdim jumagacha").debts[0].due_at.date().weekday() == 4
     assert _one("Jasurdan 500 ming qarz oldim 15 oktabrgacha").debts[0].due_at.date() == date(2026, 10, 15)

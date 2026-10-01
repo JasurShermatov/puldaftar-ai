@@ -75,7 +75,7 @@ export default function UserApp({ me, reloadMe }: { me: Me; reloadMe: () => void
         {tab === "history" && <History today={dash?.today} onOpen={setEdit} version={version} />}
         {tab === "debts" && <DebtsTab version={version} onChanged={changed} canAdd={canAdd} />}
         {tab === "ai" && <AiTab me={me} />}
-        {tab === "profile" && <Profile me={me} reloadMe={reloadMe} flash={flash} />}
+        {tab === "profile" && <Profile me={me} reloadMe={reloadMe} flash={flash} onWiped={() => { setVersion((v) => v + 1); setTab("home"); }} />}
       </main>
 
       {canAdd && (tab === "home" || tab === "history") && (
@@ -537,7 +537,7 @@ function Insights({ me }: { me: Me }) {
 
 // ======================= PROFIL =======================
 
-function Profile({ me, reloadMe, flash }: { me: Me; reloadMe: () => void; flash: (m: string) => void }) {
+function Profile({ me, reloadMe, flash, onWiped }: { me: Me; reloadMe: () => void; flash: (m: string) => void; onWiped: () => void }) {
   const [period, setPeriod] = useState<Period>("month");
   const [fmt, setFmt] = useState<"xlsx" | "csv">("xlsx");
   const [busy, setBusy] = useState(false);
@@ -568,10 +568,28 @@ function Profile({ me, reloadMe, flash }: { me: Me; reloadMe: () => void; flash:
   }
 
   async function deleteAll() {
-    if (!(await confirmDialog("Barcha ma'lumotlaringiz butunlay o'chiriladi. Davom etasizmi?"))) return;
+    const what = me.is_admin
+      ? "Barcha ma'lumotlaringiz (xarajat, daromad, qarzlar, AI suhbat) o'chiriladi. Superadmin akkaunti qoladi. Davom etasizmi?"
+      : "Barcha ma'lumotlaringiz va akkauntingiz butunlay o'chiriladi. Davom etasizmi?";
+    if (!(await confirmDialog(what))) return;
     if (!(await confirmDialog("Rostdan ham? Bu amalni qaytarib bo'lmaydi."))) return;
-    await api.del("/api/me");
-    tg()?.close();
+    setBusy(true);
+    try {
+      const r = await api.del<{ ok: boolean; mode: "data" | "account" }>("/api/me");
+      haptic("success");
+      if (r.mode === "data") {
+        flash("🗑 Barcha ma'lumotlar o'chirildi");
+        reloadMe();
+        onWiped();
+      } else {
+        tg()?.close();
+      }
+    } catch (e) {
+      haptic("error");
+      flash(e instanceof ApiError ? e.message : "O'chirib bo'lmadi, qaytadan urinib ko'ring");
+    } finally {
+      setBusy(false);
+    }
   }
 
   const endStr = me.access.ends_at ? dateOf(me.access.ends_at) : "—";
@@ -674,9 +692,10 @@ function Profile({ me, reloadMe, flash }: { me: Me; reloadMe: () => void; flash:
           Ma'lumotlaringiz faqat sizga ko'rinadi: har bir so'rov Telegram imzosi bilan tekshiriladi, bazada qator darajasida
           izolyatsiya (RLS), izohlar, qarz ismlari va AI suhbat AES-256 bilan shifrlangan. Ovozli xabarlar saqlanmaydi.
         </p>
-        <button className="btn danger full" onClick={deleteAll}>
+        <button className="btn danger full" onClick={deleteAll} disabled={busy}>
           🗑 Barcha ma'lumotlarimni o'chirish
         </button>
+        {me.is_admin && <p className="hint">Superadmin akkaunti o'chirilmaydi (.env SUPERADMIN_IDS) — faqat ma'lumotlar tozalanadi.</p>}
       </Card>
       <p className="center muted small">Hisobchi AI · v1.1</p>
     </>
