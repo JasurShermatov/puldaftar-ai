@@ -15,7 +15,8 @@ say() { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 export DEBIAN_FRONTEND=noninteractive
 say "Paketlar"
 apt-get update -qq
-apt-get install -y -qq ufw fail2ban unattended-upgrades curl >/dev/null || apt-get install -y ufw fail2ban unattended-upgrades curl
+apt-get install -y -qq ufw fail2ban unattended-upgrades cron curl >/dev/null || apt-get install -y ufw fail2ban unattended-upgrades cron curl
+systemctl enable --now cron >/dev/null 2>&1 || true
 
 say "Firewall (UFW): 22, 80, 443"
 SSH_PORT="$( { grep -hE '^Port ' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true; } | awk '{print $2}' | head -1)"

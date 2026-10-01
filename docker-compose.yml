@@ -75,7 +75,8 @@ services:
       - certbot_www:/var/www/certbot:ro
     depends_on: [web]
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -T 3 -O /dev/null http://127.0.0.1/.well-known/acme-challenge/ping || [ $? -eq 8 ]"]
+      # Alpine (busybox) wget: har qanday HTTP javob (404 ham) = nginx tirik
+      test: ["CMD-SHELL", "wget -q -S -T 3 -O /dev/null http://127.0.0.1/.well-known/acme-challenge/ping 2>&1 | grep -q 'HTTP/'"]
       interval: 30s
       timeout: 5s
       retries: 3
